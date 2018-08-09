@@ -104,18 +104,17 @@
  */
 #include <peelo/prompt.hpp>
 
+#include <cstdlib>
+#include <cstdio>
+#include <cerrno>
+#include <cstring>
+#include <cctype>
+
 #include <termios.h>
 #include <unistd.h>
-#include <stdlib.h>
-#include <stdio.h>
-#include <errno.h>
-#include <string.h>
-#include <stdlib.h>
-#include <ctype.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/ioctl.h>
-#include <unistd.h>
 
 #define LINENOISE_DEFAULT_HISTORY_MAX_LEN 100
 #define LINENOISE_MAX_LINE 4096
@@ -136,18 +135,21 @@ static char **history = NULL;
  * We pass this state to functions implementing specific editing
  * functionalities. */
 struct linenoiseState {
-    int ifd;            /* Terminal stdin file descriptor. */
-    int ofd;            /* Terminal stdout file descriptor. */
-    char *buf;          /* Edited line buffer. */
-    size_t buflen;      /* Edited line buffer size. */
-    std::string prompt; /* Prompt to display. */
-    size_t plen;        /* Prompt length. */
-    size_t pos;         /* Current cursor position. */
-    size_t oldpos;      /* Previous refresh cursor position. */
-    size_t len;         /* Current edited line length. */
-    size_t cols;        /* Number of columns in terminal. */
-    size_t maxrows;     /* Maximum num of rows used so far (multiline mode) */
-    int history_index;  /* The history index we are currently editing. */
+  int ifd;            /* Terminal stdin file descriptor. */
+  int ofd;            /* Terminal stdout file descriptor. */
+  /** Edited line buffer. */
+  char buf[LINENOISE_MAX_LINE];
+  /** Size of the line buffer. */
+  std::size_t buflen;
+  /** Prompt to display. */
+  std::string prompt;
+  size_t plen;        /* Prompt length. */
+  size_t pos;         /* Current cursor position. */
+  size_t oldpos;      /* Previous refresh cursor position. */
+  size_t len;         /* Current edited line length. */
+  size_t cols;        /* Number of columns in terminal. */
+  size_t maxrows;     /* Maximum num of rows used so far (multiline mode) */
+  int history_index;  /* The history index we are currently editing. */
 };
 
 enum KEY_ACTION{
@@ -364,11 +366,11 @@ static int completeLine(struct linenoiseState *ls) {
                 struct linenoiseState saved = *ls;
 
                 ls->len = ls->pos = strlen(lc.cvec[i]);
-                ls->buf = lc.cvec[i];
+                std::strncpy(ls->buf, lc.cvec[i], ls->buflen);
                 refreshLine(ls);
                 ls->len = saved.len;
                 ls->pos = saved.pos;
-                ls->buf = saved.buf;
+                std::strncpy(ls->buf, saved.buf, ls->buflen);
             } else {
                 refreshLine(ls);
             }
@@ -767,195 +769,214 @@ void linenoiseEditDeletePrevWord(struct linenoiseState *l) {
  * when ctrl+d is typed.
  *
  * The function returns the length of the current buffer. */
-static int linenoiseEdit(int stdin_fd,
-                         int stdout_fd,
-                         char* buf,
-                         std::size_t buflen,
-                         const std::string& prompt)
+static std::optional<std::string> linenoiseEdit(int stdin_fd,
+                                                int stdout_fd,
+                                                const std::string& prompt)
 {
-    struct linenoiseState l;
+  struct linenoiseState l;
 
-    /* Populate the linenoise state that we pass to functions implementing
-     * specific editing functionalities. */
-    l.ifd = stdin_fd;
-    l.ofd = stdout_fd;
-    l.buf = buf;
-    l.buflen = buflen;
-    l.prompt = prompt;
-    l.oldpos = l.pos = 0;
-    l.len = 0;
-    l.cols = getColumns(stdin_fd, stdout_fd);
-    l.maxrows = 0;
-    l.history_index = 0;
+  /* Populate the linenoise state that we pass to functions implementing
+   * specific editing functionalities. */
+  l.ifd = stdin_fd;
+  l.ofd = stdout_fd;
+  l.buflen = LINENOISE_MAX_LINE;
+  l.prompt = prompt;
+  l.oldpos = l.pos = 0;
+  l.len = 0;
+  l.cols = getColumns(stdin_fd, stdout_fd);
+  l.maxrows = 0;
+  l.history_index = 0;
 
-    /* Buffer starts empty. */
-    l.buf[0] = '\0';
-    l.buflen--; /* Make sure there is always space for the nulterm */
+  /* Buffer starts empty. */
+  l.buf[0] = '\0';
+  l.buflen--; /* Make sure there is always space for the nulterm */
 
-    /* The latest history entry is always our current buffer, that
-     * initially is just an empty string. */
-    linenoiseHistoryAdd("");
+  /* The latest history entry is always our current buffer, that
+   * initially is just an empty string. */
+  linenoiseHistoryAdd("");
 
-    if (write(l.ofd, prompt.c_str(), prompt.length()) == -1)
+  if (write(l.ofd, prompt.c_str(), prompt.length()) == -1)
+  {
+    return std::optional<std::string>();
+  }
+
+  for (;;)
+  {
+    char c;
+    const auto nread = read(l.ifd, &c, 1);
+    char seq[3];
+
+    if (nread <= 0)
     {
-      return -1;
+      return std::optional<std::string>(std::string(l.buf, l.len));
     }
 
-    while(1) {
-        char c;
-        int nread;
-        char seq[3];
+    /* Only autocomplete when the callback is set. It returns < 0 when
+     * there was an error reading from fd. Otherwise it will return the
+     * character that should be handled next. */
+    if (c == 9 && completionCallback != NULL)
+    {
+      c = completeLine(&l);
+      /* Return on errors */
+      if (c < 0)
+      {
+        return std::optional<std::string>(std::string(l.buf, l.len));
+      }
+      /* Read next character when 0 */
+      if (c == 0)
+      {
+        continue;
+      }
+    }
 
-        nread = read(l.ifd,&c,1);
-        if (nread <= 0) return l.len;
+    switch(c) {
+    case ENTER:    /* enter */
+      history_len--;
+      free(history[history_len]);
+      if (mlmode) linenoiseEditMoveEnd(&l);
+      if (hintsCallback) {
+          /* Force a refresh without hints to leave the previous
+           * line as the user typed it after a newline. */
+          linenoiseHintsCallback *hc = hintsCallback;
+          hintsCallback = NULL;
+          refreshLine(&l);
+          hintsCallback = hc;
+      }
+      return std::optional<std::string>(std::string(l.buf, l.len));
+    case CTRL_C:     /* ctrl-c */
+      errno = EAGAIN;
+      return std::optional<std::string>();
+    case BACKSPACE:   /* backspace */
+    case 8:     /* ctrl-h */
+      linenoiseEditBackspace(&l);
+      break;
+    case CTRL_D:     /* ctrl-d, remove char at right of cursor, or if the
+                        line is empty, act as end-of-file. */
+      if (l.len > 0) {
+        linenoiseEditDelete(&l);
+      } else {
+        history_len--;
+        free(history[history_len]);
 
-        /* Only autocomplete when the callback is set. It returns < 0 when
-         * there was an error reading from fd. Otherwise it will return the
-         * character that should be handled next. */
-        if (c == 9 && completionCallback != NULL) {
-            c = completeLine(&l);
-            /* Return on errors */
-            if (c < 0) return l.len;
-            /* Read next character when 0 */
-            if (c == 0) continue;
-        }
+        return std::optional<std::string>();
+      }
+      break;
+    case CTRL_T:    /* ctrl-t, swaps current character with previous. */
+      if (l.pos > 0 && l.pos < l.len) {
+        int aux = l.buf[l.pos-1];
+        l.buf[l.pos-1] = l.buf[l.pos];
+        l.buf[l.pos] = aux;
+        if (l.pos != l.len-1) l.pos++;
+        refreshLine(&l);
+      }
+      break;
+    case CTRL_B:     /* ctrl-b */
+      linenoiseEditMoveLeft(&l);
+      break;
+    case CTRL_F:     /* ctrl-f */
+      linenoiseEditMoveRight(&l);
+      break;
+    case CTRL_P:    /* ctrl-p */
+      linenoiseEditHistoryNext(&l, LINENOISE_HISTORY_PREV);
+      break;
+    case CTRL_N:    /* ctrl-n */
+      linenoiseEditHistoryNext(&l, LINENOISE_HISTORY_NEXT);
+      break;
+    case ESC:    /* escape sequence */
+      /* Read the next two bytes representing the escape sequence.
+       * Use two calls to handle slow terminals returning the two
+       * chars at different times. */
+      if (read(l.ifd,seq,1) == -1) break;
+      if (read(l.ifd,seq+1,1) == -1) break;
 
-        switch(c) {
-        case ENTER:    /* enter */
-            history_len--;
-            free(history[history_len]);
-            if (mlmode) linenoiseEditMoveEnd(&l);
-            if (hintsCallback) {
-                /* Force a refresh without hints to leave the previous
-                 * line as the user typed it after a newline. */
-                linenoiseHintsCallback *hc = hintsCallback;
-                hintsCallback = NULL;
-                refreshLine(&l);
-                hintsCallback = hc;
-            }
-            return (int)l.len;
-        case CTRL_C:     /* ctrl-c */
-            errno = EAGAIN;
-            return -1;
-        case BACKSPACE:   /* backspace */
-        case 8:     /* ctrl-h */
-            linenoiseEditBackspace(&l);
-            break;
-        case CTRL_D:     /* ctrl-d, remove char at right of cursor, or if the
-                            line is empty, act as end-of-file. */
-            if (l.len > 0) {
+      /* ESC [ sequences. */
+      if (seq[0] == '[')
+      {
+        if (seq[1] >= '0' && seq[1] <= '9')
+        {
+            /* Extended escape, read additional byte. */
+            if (read(l.ifd,seq+2,1) == -1) break;
+            if (seq[2] == '~')
+            {
+              switch(seq[1])
+              {
+              case '3': /* Delete key. */
                 linenoiseEditDelete(&l);
-            } else {
-                history_len--;
-                free(history[history_len]);
-                return -1;
+                break;
+              }
             }
-            break;
-        case CTRL_T:    /* ctrl-t, swaps current character with previous. */
-            if (l.pos > 0 && l.pos < l.len) {
-                int aux = buf[l.pos-1];
-                buf[l.pos-1] = buf[l.pos];
-                buf[l.pos] = aux;
-                if (l.pos != l.len-1) l.pos++;
-                refreshLine(&l);
-            }
-            break;
-        case CTRL_B:     /* ctrl-b */
-            linenoiseEditMoveLeft(&l);
-            break;
-        case CTRL_F:     /* ctrl-f */
-            linenoiseEditMoveRight(&l);
-            break;
-        case CTRL_P:    /* ctrl-p */
+        } else {
+          switch(seq[1])
+          {
+          case 'A': /* Up */
             linenoiseEditHistoryNext(&l, LINENOISE_HISTORY_PREV);
             break;
-        case CTRL_N:    /* ctrl-n */
+          case 'B': /* Down */
             linenoiseEditHistoryNext(&l, LINENOISE_HISTORY_NEXT);
             break;
-        case ESC:    /* escape sequence */
-            /* Read the next two bytes representing the escape sequence.
-             * Use two calls to handle slow terminals returning the two
-             * chars at different times. */
-            if (read(l.ifd,seq,1) == -1) break;
-            if (read(l.ifd,seq+1,1) == -1) break;
-
-            /* ESC [ sequences. */
-            if (seq[0] == '[') {
-                if (seq[1] >= '0' && seq[1] <= '9') {
-                    /* Extended escape, read additional byte. */
-                    if (read(l.ifd,seq+2,1) == -1) break;
-                    if (seq[2] == '~') {
-                        switch(seq[1]) {
-                        case '3': /* Delete key. */
-                            linenoiseEditDelete(&l);
-                            break;
-                        }
-                    }
-                } else {
-                    switch(seq[1]) {
-                    case 'A': /* Up */
-                        linenoiseEditHistoryNext(&l, LINENOISE_HISTORY_PREV);
-                        break;
-                    case 'B': /* Down */
-                        linenoiseEditHistoryNext(&l, LINENOISE_HISTORY_NEXT);
-                        break;
-                    case 'C': /* Right */
-                        linenoiseEditMoveRight(&l);
-                        break;
-                    case 'D': /* Left */
-                        linenoiseEditMoveLeft(&l);
-                        break;
-                    case 'H': /* Home */
-                        linenoiseEditMoveHome(&l);
-                        break;
-                    case 'F': /* End*/
-                        linenoiseEditMoveEnd(&l);
-                        break;
-                    }
-                }
-            }
-
-            /* ESC O sequences. */
-            else if (seq[0] == 'O') {
-                switch(seq[1]) {
-                case 'H': /* Home */
-                    linenoiseEditMoveHome(&l);
-                    break;
-                case 'F': /* End*/
-                    linenoiseEditMoveEnd(&l);
-                    break;
-                }
-            }
+          case 'C': /* Right */
+            linenoiseEditMoveRight(&l);
             break;
-        default:
-            if (linenoiseEditInsert(&l,c)) return -1;
+          case 'D': /* Left */
+            linenoiseEditMoveLeft(&l);
             break;
-        case CTRL_U: /* Ctrl+u, delete the whole line. */
-            buf[0] = '\0';
-            l.pos = l.len = 0;
-            refreshLine(&l);
-            break;
-        case CTRL_K: /* Ctrl+k, delete from current to end of line. */
-            buf[l.pos] = '\0';
-            l.len = l.pos;
-            refreshLine(&l);
-            break;
-        case CTRL_A: /* Ctrl+a, go to the start of the line */
+          case 'H': /* Home */
             linenoiseEditMoveHome(&l);
             break;
-        case CTRL_E: /* ctrl+e, go to the end of the line */
+          case 'F': /* End*/
             linenoiseEditMoveEnd(&l);
             break;
-        case CTRL_L: /* ctrl+l, clear screen */
-            linenoiseClearScreen();
-            refreshLine(&l);
-            break;
-        case CTRL_W: /* ctrl+w, delete previous word */
-            linenoiseEditDeletePrevWord(&l);
-            break;
+          }
         }
+      }
+
+      /* ESC O sequences. */
+      else if (seq[0] == 'O')
+      {
+        switch(seq[1])
+        {
+        case 'H': /* Home */
+          linenoiseEditMoveHome(&l);
+          break;
+        case 'F': /* End*/
+          linenoiseEditMoveEnd(&l);
+          break;
+        }
+      }
+      break;
+    default:
+      if (linenoiseEditInsert(&l,c))
+      {
+        return std::optional<std::string>();
+      }
+      break;
+    case CTRL_U: /* Ctrl+u, delete the whole line. */
+      l.buf[0] = '\0';
+      l.pos = l.len = 0;
+      refreshLine(&l);
+      break;
+    case CTRL_K: /* Ctrl+k, delete from current to end of line. */
+      l.buf[l.pos] = '\0';
+      l.len = l.pos;
+      refreshLine(&l);
+      break;
+    case CTRL_A: /* Ctrl+a, go to the start of the line */
+      linenoiseEditMoveHome(&l);
+      break;
+    case CTRL_E: /* ctrl+e, go to the end of the line */
+      linenoiseEditMoveEnd(&l);
+      break;
+    case CTRL_L: /* ctrl+l, clear screen */
+      linenoiseClearScreen();
+      refreshLine(&l);
+      break;
+    case CTRL_W: /* ctrl+w, delete previous word */
+      linenoiseEditDeletePrevWord(&l);
+      break;
     }
-    return l.len;
+  }
+
+  return std::optional<std::string>(std::string(l.buf, l.len));
 }
 
 /* This special mode is used by linenoise in order to print scan codes
@@ -988,22 +1009,19 @@ void linenoisePrintKeyCodes(void) {
 
 /* This function calls the line editing function linenoiseEdit() using
  * the STDIN file descriptor set in raw mode. */
-static bool linenoiseRaw(char* buf,
-                         std::size_t buflen,
-                         const std::string& prompt)
+static std::optional<std::string> linenoiseRaw(const std::string& prompt)
 {
-    int count;
+  std::optional<std::string> result;
 
-    if (buflen == 0 || enableRawMode(STDIN_FILENO) == -1)
-    {
-      return false;
-    }
+  if (enableRawMode(STDIN_FILENO) == -1)
+  {
+    return std::optional<std::string>();
+  }
+  result = linenoiseEdit(STDIN_FILENO, STDOUT_FILENO, prompt);
+  disableRawMode(STDIN_FILENO);
+  std::printf("\n");
 
-    count = linenoiseEdit(STDIN_FILENO, STDOUT_FILENO, buf, buflen, prompt);
-    disableRawMode(STDIN_FILENO);
-    std::printf("\n");
-
-    return count;
+  return result;
 }
 
 /* This function is called when linenoise() is called with the standard
@@ -1011,35 +1029,25 @@ static bool linenoiseRaw(char* buf,
  * program using linenoise is called in pipe or with a file redirected
  * to its standard input. In this case, we want to be able to return the
  * line regardless of its length (by default we are limited to 4k). */
-static char *linenoiseNoTTY(void) {
-    char *line = NULL;
-    size_t len = 0, maxlen = 0;
+static std::optional<std::string> linenoiseNoTTY()
+{
+  std::string line;
 
-    while(1) {
-        if (len == maxlen) {
-            if (maxlen == 0) maxlen = 16;
-            maxlen *= 2;
-            char *oldval = line;
-            line = static_cast<char*>(realloc(line,maxlen));
-            if (line == NULL) {
-                if (oldval) free(oldval);
-                return NULL;
-            }
-        }
-        int c = fgetc(stdin);
-        if (c == EOF || c == '\n') {
-            if (c == EOF && len == 0) {
-                free(line);
-                return NULL;
-            } else {
-                line[len] = '\0';
-                return line;
-            }
-        } else {
-            line[len] = c;
-            len++;
-        }
+  for (;;)
+  {
+    const auto c = std::fgetc(stdin);
+
+    if (c == EOF || c == '\n')
+    {
+      if (c == EOF && line.empty())
+      {
+        return std::optional<std::string>();
+      }
+
+      return std::optional<std::string>(line);
     }
+    line.append(1, static_cast<char>(c));
+  }
 }
 
 /* The high level function that is the main API of the linenoise library.
@@ -1047,11 +1055,8 @@ static char *linenoiseNoTTY(void) {
  * for a blacklist of stupid terminals, and later either calls the line
  * editing function or uses dummy fgets() so that you will be able to type
  * something even in the most desperate of the conditions. */
-char* linenoise(const std::string& prompt)
+std::optional<std::string> linenoise(const std::string& prompt)
 {
-  char buf[LINENOISE_MAX_LINE];
-  int count;
-
   if (!isatty(STDIN_FILENO))
   {
     /* Not a tty: read from file / pipe. In this mode we don't want any
@@ -1060,31 +1065,26 @@ char* linenoise(const std::string& prompt)
   }
   else if (isUnsupportedTerm())
   {
-    size_t len;
+    char buffer[LINENOISE_MAX_LINE];
+    std::size_t length;
 
     std::printf("%s", prompt.c_str());
-    fflush(stdout);
-    if (fgets(buf,LINENOISE_MAX_LINE,stdin) == NULL) return NULL;
-    len = strlen(buf);
-    while(len && (buf[len-1] == '\n' || buf[len-1] == '\r'))
+    std::fflush(stdout);
+    if (!std::fgets(buffer, LINENOISE_MAX_LINE, stdin))
     {
-      len--;
-      buf[len] = '\0';
+      return std::optional<std::string>();
     }
-    return strdup(buf);
-  } else {
-    count = linenoiseRaw(buf,LINENOISE_MAX_LINE,prompt);
-    if (count == -1) return NULL;
-    return strdup(buf);
-  }
-}
+    length = std::strlen(buffer);
+    while (length && (buffer[length-1] == '\n' || buffer[length-1] == '\r'))
+    {
+      --length;
+      buffer[length] = '\0';
+    }
 
-/* This is just a wrapper the user may want to call in order to make sure
- * the linenoise returned buffer is freed with the same allocator it was
- * created with. Useful when the main program is using an alternative
- * allocator. */
-void linenoiseFree(void *ptr) {
-    free(ptr);
+    return std::optional<std::string>(std::string(buffer, length));
+  }
+
+  return linenoiseRaw(prompt);
 }
 
 /* ================================ History ================================= */
