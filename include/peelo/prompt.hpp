@@ -35,16 +35,13 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
+#ifndef PEELO_PROMPT_HPP_GUARD
+#define PEELO_PROMPT_HPP_GUARD
 
-#ifndef __LINENOISE_H
-#define __LINENOISE_H
-
-#ifdef __cplusplus
-extern "C" {
-#endif
+#include <cstddef>
 
 typedef struct linenoiseCompletions {
-  size_t len;
+  std::size_t len;
   char **cvec;
 } linenoiseCompletions;
 
@@ -66,8 +63,4 @@ void linenoiseClearScreen(void);
 void linenoiseSetMultiLine(int ml);
 void linenoisePrintKeyCodes(void);
 
-#ifdef __cplusplus
-}
-#endif
-
-#endif /* __LINENOISE_H */
+#endif /* !PEELO_PROMPT_HPP_GUARD */
