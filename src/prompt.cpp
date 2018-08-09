@@ -140,7 +140,7 @@ struct linenoiseState {
     int ofd;            /* Terminal stdout file descriptor. */
     char *buf;          /* Edited line buffer. */
     size_t buflen;      /* Edited line buffer size. */
-    const char *prompt; /* Prompt to display. */
+    std::string prompt; /* Prompt to display. */
     size_t plen;        /* Prompt length. */
     size_t pos;         /* Current cursor position. */
     size_t oldpos;      /* Previous refresh cursor position. */
@@ -503,7 +503,7 @@ void refreshShowHints(struct abuf *ab, struct linenoiseState *l, int plen) {
  * cursor position, and number of columns of the terminal. */
 static void refreshSingleLine(struct linenoiseState *l) {
     char seq[64];
-    size_t plen = strlen(l->prompt);
+    auto plen = l->prompt.length();
     int fd = l->ofd;
     char *buf = l->buf;
     size_t len = l->len;
@@ -524,7 +524,7 @@ static void refreshSingleLine(struct linenoiseState *l) {
     snprintf(seq,64,"\r");
     abAppend(&ab,seq,strlen(seq));
     /* Write the prompt and the current buffer content */
-    abAppend(&ab,l->prompt,strlen(l->prompt));
+    abAppend(&ab, l->prompt.c_str(), l->prompt.length());
     abAppend(&ab,buf,len);
     /* Show hits if any. */
     refreshShowHints(&ab,l,plen);
@@ -544,7 +544,7 @@ static void refreshSingleLine(struct linenoiseState *l) {
  * cursor position, and number of columns of the terminal. */
 static void refreshMultiLine(struct linenoiseState *l) {
     char seq[64];
-    int plen = strlen(l->prompt);
+    auto plen = l->prompt.length();
     int rows = (plen+l->len+l->cols-1)/l->cols; /* rows used by current buf. */
     int rpos = (plen+l->oldpos+l->cols)/l->cols; /* cursor relative row. */
     int rpos2; /* rpos after refresh. */
@@ -578,7 +578,7 @@ static void refreshMultiLine(struct linenoiseState *l) {
     abAppend(&ab,seq,strlen(seq));
 
     /* Write the prompt and the current buffer content */
-    abAppend(&ab,l->prompt,strlen(l->prompt));
+    abAppend(&ab, l->prompt.c_str(), l->prompt.length());
     abAppend(&ab,l->buf,l->len);
 
     /* Show hits if any. */
@@ -767,7 +767,11 @@ void linenoiseEditDeletePrevWord(struct linenoiseState *l) {
  * when ctrl+d is typed.
  *
  * The function returns the length of the current buffer. */
-static int linenoiseEdit(int stdin_fd, int stdout_fd, char *buf, size_t buflen, const char *prompt)
+static int linenoiseEdit(int stdin_fd,
+                         int stdout_fd,
+                         char* buf,
+                         std::size_t buflen,
+                         const std::string& prompt)
 {
     struct linenoiseState l;
 
@@ -778,7 +782,6 @@ static int linenoiseEdit(int stdin_fd, int stdout_fd, char *buf, size_t buflen, 
     l.buf = buf;
     l.buflen = buflen;
     l.prompt = prompt;
-    l.plen = strlen(prompt);
     l.oldpos = l.pos = 0;
     l.len = 0;
     l.cols = getColumns(stdin_fd, stdout_fd);
@@ -793,7 +796,11 @@ static int linenoiseEdit(int stdin_fd, int stdout_fd, char *buf, size_t buflen, 
      * initially is just an empty string. */
     linenoiseHistoryAdd("");
 
-    if (write(l.ofd,prompt,l.plen) == -1) return -1;
+    if (write(l.ofd, prompt.c_str(), prompt.length()) == -1)
+    {
+      return -1;
+    }
+
     while(1) {
         char c;
         int nread;
@@ -981,18 +988,21 @@ void linenoisePrintKeyCodes(void) {
 
 /* This function calls the line editing function linenoiseEdit() using
  * the STDIN file descriptor set in raw mode. */
-static int linenoiseRaw(char *buf, size_t buflen, const char *prompt) {
+static bool linenoiseRaw(char* buf,
+                         std::size_t buflen,
+                         const std::string& prompt)
+{
     int count;
 
-    if (buflen == 0) {
-        errno = EINVAL;
-        return -1;
+    if (buflen == 0 || enableRawMode(STDIN_FILENO) == -1)
+    {
+      return false;
     }
 
-    if (enableRawMode(STDIN_FILENO) == -1) return -1;
     count = linenoiseEdit(STDIN_FILENO, STDOUT_FILENO, buf, buflen, prompt);
     disableRawMode(STDIN_FILENO);
-    printf("\n");
+    std::printf("\n");
+
     return count;
 }
 
@@ -1037,31 +1047,36 @@ static char *linenoiseNoTTY(void) {
  * for a blacklist of stupid terminals, and later either calls the line
  * editing function or uses dummy fgets() so that you will be able to type
  * something even in the most desperate of the conditions. */
-char *linenoise(const char *prompt) {
-    char buf[LINENOISE_MAX_LINE];
-    int count;
+char* linenoise(const std::string& prompt)
+{
+  char buf[LINENOISE_MAX_LINE];
+  int count;
 
-    if (!isatty(STDIN_FILENO)) {
-        /* Not a tty: read from file / pipe. In this mode we don't want any
-         * limit to the line size, so we call a function to handle that. */
-        return linenoiseNoTTY();
-    } else if (isUnsupportedTerm()) {
-        size_t len;
+  if (!isatty(STDIN_FILENO))
+  {
+    /* Not a tty: read from file / pipe. In this mode we don't want any
+     * limit to the line size, so we call a function to handle that. */
+    return linenoiseNoTTY();
+  }
+  else if (isUnsupportedTerm())
+  {
+    size_t len;
 
-        printf("%s",prompt);
-        fflush(stdout);
-        if (fgets(buf,LINENOISE_MAX_LINE,stdin) == NULL) return NULL;
-        len = strlen(buf);
-        while(len && (buf[len-1] == '\n' || buf[len-1] == '\r')) {
-            len--;
-            buf[len] = '\0';
-        }
-        return strdup(buf);
-    } else {
-        count = linenoiseRaw(buf,LINENOISE_MAX_LINE,prompt);
-        if (count == -1) return NULL;
-        return strdup(buf);
+    std::printf("%s", prompt.c_str());
+    fflush(stdout);
+    if (fgets(buf,LINENOISE_MAX_LINE,stdin) == NULL) return NULL;
+    len = strlen(buf);
+    while(len && (buf[len-1] == '\n' || buf[len-1] == '\r'))
+    {
+      len--;
+      buf[len] = '\0';
     }
+    return strdup(buf);
+  } else {
+    count = linenoiseRaw(buf,LINENOISE_MAX_LINE,prompt);
+    if (count == -1) return NULL;
+    return strdup(buf);
+  }
 }
 
 /* This is just a wrapper the user may want to call in order to make sure

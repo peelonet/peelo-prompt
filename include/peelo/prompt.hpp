@@ -38,7 +38,7 @@
 #ifndef PEELO_PROMPT_HPP_GUARD
 #define PEELO_PROMPT_HPP_GUARD
 
-#include <cstddef>
+#include <string>
 
 typedef struct linenoiseCompletions {
   std::size_t len;
@@ -53,7 +53,7 @@ void linenoiseSetHintsCallback(linenoiseHintsCallback *);
 void linenoiseSetFreeHintsCallback(linenoiseFreeHintsCallback *);
 void linenoiseAddCompletion(linenoiseCompletions *, const char *);
 
-char *linenoise(const char *prompt);
+char *linenoise(const std::string& prompt);
 void linenoiseFree(void *ptr);
 int linenoiseHistoryAdd(const char *line);
 int linenoiseHistorySetMaxLen(int len);
