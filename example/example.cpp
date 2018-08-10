@@ -28,7 +28,7 @@ int main(int argc, char** argv)
     argv++;
     if (!std::strcmp(*argv, "--multiline"))
     {
-      linenoiseSetMultiLine(1);
+      peelo::prompt::set_multi_line(true);
       std::cout << "Multi-line mode enabled." << std::endl;
     }
     else if (!std::strcmp(*argv, "--keycodes"))

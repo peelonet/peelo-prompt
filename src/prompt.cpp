@@ -89,9 +89,8 @@
  *    Sequence: ESC [ n B
  *    Effect: moves cursor down of n chars.
  *
- * When linenoiseClearScreen() is called, two additional escape sequences
- * are used in order to clear the screen and position the cursor at home
- * position.
+ * When clear_screen() is called, two additional escape sequences are used in
+ * order to clear the screen and position the cursor at home position.
  *
  * CUP (Cursor position)
  *    Sequence: ESC [ H
@@ -124,7 +123,6 @@ static linenoiseFreeHintsCallback *freeHintsCallback = NULL;
 
 static struct termios orig_termios; /* In order to restore at exit.*/
 static int rawmode = 0; /* For atexit() function to check if restore is needed*/
-static int mlmode = 0;  /* Multi line mode. Default is single line. */
 static int atexit_registered = 0; /* Register atexit just 1 time. */
 static int history_max_len = LINENOISE_DEFAULT_HISTORY_MAX_LEN;
 static int history_len = 0;
@@ -174,8 +172,7 @@ enum KEY_ACTION{
 };
 
 static void linenoiseAtExit(void);
-int linenoiseHistoryAdd(const char *line);
-static void refreshLine(struct linenoiseState *l);
+static void refreshLine(linenoiseState&);
 
 /* Debugging macro. */
 #if 0
@@ -198,9 +195,22 @@ FILE *lndebug_fp = NULL;
 
 /* ======================= Low level terminal handling ====================== */
 
-/* Set if to use or not the multi line mode. */
-void linenoiseSetMultiLine(int ml) {
-    mlmode = ml;
+namespace peelo
+{
+  namespace prompt
+  {
+    static bool multi_line = false;
+
+    bool is_multi_line()
+    {
+      return multi_line;
+    }
+
+    void set_multi_line(bool flag)
+    {
+      multi_line = flag;
+    }
+  }
 }
 
 /* Return true if the terminal name is in the list of terminals we know are
@@ -317,26 +327,25 @@ failed:
     return 80;
 }
 
-/* Clear the screen. Used to handle ctrl+l */
-void linenoiseClearScreen(void) {
-    if (write(STDOUT_FILENO,"\x1b[H\x1b[2J",7) <= 0) {
-        /* nothing to do, just to avoid warning. */
-    }
-}
-
-/* Beep, used for completion when there is nothing to complete or when all
- * the choices were already shown. */
-static void linenoiseBeep(void) {
-    fprintf(stderr, "\x7");
-    fflush(stderr);
-}
-
-/* ============================== Completion ================================ */
-
 namespace peelo
 {
   namespace prompt
   {
+    void clear_screen()
+    {
+      ::write(STDOUT_FILENO, "\033[H\033[2J", 7);
+    }
+
+    /**
+     * Beep, used for completion when there is nothing to complete or when all
+     * the choices were already shown.
+     */
+    static void beep()
+    {
+      std::fprintf(stderr, "\x7");
+      std::fflush(stderr);
+    }
+
     namespace completion
     {
       static std::optional<callback_type> callback;
@@ -359,7 +368,7 @@ namespace peelo
 
         if (completions.empty())
         {
-          linenoiseBeep();
+          beep();
         } else {
           bool stop = false;
           container_type::size_type i = 0;
@@ -374,12 +383,12 @@ namespace peelo
 
               state.len = state.pos = completion.length();
               std::strncpy(state.buf, completion.c_str(), state.buflen);
-              refreshLine(&state);
+              refreshLine(state);
               state.len = saved.len;
               state.pos = saved.pos;
               std::strncpy(state.buf, saved.buf, state.buflen);
             } else {
-              refreshLine(&state);
+              refreshLine(state);
             }
 
             if (::read(state.ifd, &c, 1) <= 0)
@@ -393,7 +402,7 @@ namespace peelo
                 i = (i + 1) % (completions.size() + 1);
                 if (i == completions.size())
                 {
-                  linenoiseBeep();
+                  beep();
                 }
                 break;
 
@@ -401,7 +410,7 @@ namespace peelo
                 // Re-show original buffer.
                 if (i < completions.size())
                 {
-                  refreshLine(&state);
+                  refreshLine(state);
                 }
                 stop = true;
                 break;
@@ -631,49 +640,55 @@ static void refreshMultiLine(struct linenoiseState *l) {
     abFree(&ab);
 }
 
-/* Calls the two low level functions refreshSingleLine() or
- * refreshMultiLine() according to the selected mode. */
-static void refreshLine(struct linenoiseState *l) {
-    if (mlmode)
-        refreshMultiLine(l);
-    else
-        refreshSingleLine(l);
+/**
+ * Calls the two low level functions refreshSingleLine() or refreshMultiLine()
+ * according to the selected mode.
+ */
+static void refreshLine(linenoiseState& state)
+{
+  if (peelo::prompt::multi_line)
+  {
+    refreshMultiLine(&state);
+  } else {
+    refreshSingleLine(&state);
+  }
 }
 
 /* Insert the character 'c' at cursor current position.
  *
  * On error writing to the terminal -1 is returned, otherwise 0. */
-int linenoiseEditInsert(struct linenoiseState *l, char c) {
-    if (l->len < l->buflen) {
-        if (l->len == l->pos) {
-            l->buf[l->pos] = c;
-            l->pos++;
-            l->len++;
-            l->buf[l->len] = '\0';
-            if ((!mlmode && l->plen+l->len < l->cols && !hintsCallback)) {
-                /* Avoid a full update of the line in the
-                 * trivial case. */
-                if (write(l->ofd,&c,1) == -1) return -1;
-            } else {
-                refreshLine(l);
-            }
-        } else {
-            memmove(l->buf+l->pos+1,l->buf+l->pos,l->len-l->pos);
-            l->buf[l->pos] = c;
-            l->len++;
-            l->pos++;
-            l->buf[l->len] = '\0';
-            refreshLine(l);
-        }
+int linenoiseEditInsert(struct linenoiseState *l, char c)
+{
+  if (l->len < l->buflen) {
+    if (l->len == l->pos) {
+      l->buf[l->pos] = c;
+      l->pos++;
+      l->len++;
+      l->buf[l->len] = '\0';
+      if ((!peelo::prompt::multi_line && l->plen+l->len < l->cols && !hintsCallback)) {
+        /* Avoid a full update of the line in the
+         * trivial case. */
+        if (write(l->ofd,&c,1) == -1) return -1;
+      } else {
+        refreshLine(*l);
+      }
+    } else {
+      memmove(l->buf+l->pos+1,l->buf+l->pos,l->len-l->pos);
+      l->buf[l->pos] = c;
+      l->len++;
+      l->pos++;
+      l->buf[l->len] = '\0';
+      refreshLine(*l);
     }
-    return 0;
+  }
+  return 0;
 }
 
 /* Move cursor on the left. */
 void linenoiseEditMoveLeft(struct linenoiseState *l) {
     if (l->pos > 0) {
         l->pos--;
-        refreshLine(l);
+        refreshLine(*l);
     }
 }
 
@@ -681,7 +696,7 @@ void linenoiseEditMoveLeft(struct linenoiseState *l) {
 void linenoiseEditMoveRight(struct linenoiseState *l) {
     if (l->pos != l->len) {
         l->pos++;
-        refreshLine(l);
+        refreshLine(*l);
     }
 }
 
@@ -689,7 +704,7 @@ void linenoiseEditMoveRight(struct linenoiseState *l) {
 void linenoiseEditMoveHome(struct linenoiseState *l) {
     if (l->pos != 0) {
         l->pos = 0;
-        refreshLine(l);
+        refreshLine(*l);
     }
 }
 
@@ -697,7 +712,7 @@ void linenoiseEditMoveHome(struct linenoiseState *l) {
 void linenoiseEditMoveEnd(struct linenoiseState *l) {
     if (l->pos != l->len) {
         l->pos = l->len;
-        refreshLine(l);
+        refreshLine(*l);
     }
 }
 
@@ -723,7 +738,7 @@ void linenoiseEditHistoryNext(struct linenoiseState *l, int dir) {
         strncpy(l->buf,history[history_len - 1 - l->history_index],l->buflen);
         l->buf[l->buflen-1] = '\0';
         l->len = l->pos = strlen(l->buf);
-        refreshLine(l);
+        refreshLine(*l);
     }
 }
 
@@ -734,7 +749,7 @@ void linenoiseEditDelete(struct linenoiseState *l) {
         memmove(l->buf+l->pos,l->buf+l->pos+1,l->len-l->pos-1);
         l->len--;
         l->buf[l->len] = '\0';
-        refreshLine(l);
+        refreshLine(*l);
     }
 }
 
@@ -745,7 +760,7 @@ void linenoiseEditBackspace(struct linenoiseState *l) {
         l->pos--;
         l->len--;
         l->buf[l->len] = '\0';
-        refreshLine(l);
+        refreshLine(*l);
     }
 }
 
@@ -762,7 +777,7 @@ void linenoiseEditDeletePrevWord(struct linenoiseState *l) {
     diff = old_pos - l->pos;
     memmove(l->buf+l->pos,l->buf+old_pos,l->len-old_pos+1);
     l->len -= diff;
-    refreshLine(l);
+    refreshLine(*l);
 }
 
 /* This function is the core of the line editing capability of linenoise.
@@ -837,13 +852,16 @@ static std::optional<std::string> linenoiseEdit(int stdin_fd,
     case ENTER:    /* enter */
       history_len--;
       free(history[history_len]);
-      if (mlmode) linenoiseEditMoveEnd(&l);
+      if (peelo::prompt::multi_line)
+      {
+        linenoiseEditMoveEnd(&l);
+      }
       if (hintsCallback) {
           /* Force a refresh without hints to leave the previous
            * line as the user typed it after a newline. */
           linenoiseHintsCallback *hc = hintsCallback;
           hintsCallback = NULL;
-          refreshLine(&l);
+          refreshLine(l);
           hintsCallback = hc;
       }
       return std::optional<std::string>(std::string(l.buf, l.len));
@@ -871,7 +889,7 @@ static std::optional<std::string> linenoiseEdit(int stdin_fd,
         l.buf[l.pos-1] = l.buf[l.pos];
         l.buf[l.pos] = aux;
         if (l.pos != l.len-1) l.pos++;
-        refreshLine(&l);
+        refreshLine(l);
       }
       break;
     case CTRL_B:     /* ctrl-b */
@@ -957,12 +975,12 @@ static std::optional<std::string> linenoiseEdit(int stdin_fd,
     case CTRL_U: /* Ctrl+u, delete the whole line. */
       l.buf[0] = '\0';
       l.pos = l.len = 0;
-      refreshLine(&l);
+      refreshLine(l);
       break;
     case CTRL_K: /* Ctrl+k, delete from current to end of line. */
       l.buf[l.pos] = '\0';
       l.len = l.pos;
-      refreshLine(&l);
+      refreshLine(l);
       break;
     case CTRL_A: /* Ctrl+a, go to the start of the line */
       linenoiseEditMoveHome(&l);
@@ -971,8 +989,8 @@ static std::optional<std::string> linenoiseEdit(int stdin_fd,
       linenoiseEditMoveEnd(&l);
       break;
     case CTRL_L: /* ctrl+l, clear screen */
-      linenoiseClearScreen();
-      refreshLine(&l);
+      peelo::prompt::clear_screen();
+      refreshLine(l);
       break;
     case CTRL_W: /* ctrl+w, delete previous word */
       linenoiseEditDeletePrevWord(&l);

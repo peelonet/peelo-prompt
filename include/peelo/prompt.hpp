@@ -51,6 +51,22 @@ namespace peelo
 
     value_type input(const std::string& prompt);
 
+    /**
+     * Clears the screen. Used to handle ^L.
+     */
+    void clear_screen();
+
+    /**
+     * Returns a boolean flag which tells whether multi line mode is currently
+     * used or not.
+     */
+    bool is_multi_line();
+
+    /**
+     * Sets the flag whether multi line mode is being used or not.
+     */
+    void set_multi_line(bool flag);
+
     namespace completion
     {
       using container_type = std::vector<std::string>;
@@ -76,8 +92,6 @@ int linenoiseHistoryAdd(const char *line);
 int linenoiseHistorySetMaxLen(int len);
 int linenoiseHistorySave(const char *filename);
 int linenoiseHistoryLoad(const char *filename);
-void linenoiseClearScreen(void);
-void linenoiseSetMultiLine(int ml);
 void linenoisePrintKeyCodes(void);
 
 #endif /* !PEELO_PROMPT_HPP_GUARD */
