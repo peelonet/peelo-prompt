@@ -117,13 +117,9 @@
 
 #define LINENOISE_DEFAULT_HISTORY_MAX_LEN 100
 #define LINENOISE_MAX_LINE 4096
-static const char *unsupported_term[] = {"dumb","cons25","emacs",NULL};
 static linenoiseHintsCallback *hintsCallback = NULL;
 static linenoiseFreeHintsCallback *freeHintsCallback = NULL;
 
-static struct termios orig_termios; /* In order to restore at exit.*/
-static int rawmode = 0; /* For atexit() function to check if restore is needed*/
-static int atexit_registered = 0; /* Register atexit just 1 time. */
 static int history_max_len = LINENOISE_DEFAULT_HISTORY_MAX_LEN;
 static int history_len = 0;
 static char **history = NULL;
@@ -171,8 +167,8 @@ enum KEY_ACTION{
 	BACKSPACE =  127    /* Backspace */
 };
 
-static void linenoiseAtExit(void);
 static void refreshLine(linenoiseState&);
+static void freeHistory();
 
 /* Debugging macro. */
 #if 0
@@ -199,7 +195,19 @@ namespace peelo
 {
   namespace prompt
   {
+    static const char* unsupported_term[] =
+    {
+      "dumb",
+      "cons25",
+      "emacs",
+      NULL
+    };
     static bool multi_line = false;
+    static bool raw_mode = false;
+    static ::termios original_termios;
+    static bool atexit_registered = false;
+
+    static void disable_raw_mode(int);
 
     bool is_multi_line()
     {
@@ -210,127 +218,192 @@ namespace peelo
     {
       multi_line = flag;
     }
-  }
-}
 
-/* Return true if the terminal name is in the list of terminals we know are
- * not able to understand basic escape sequences. */
-static int isUnsupportedTerm(void) {
-    char *term = getenv("TERM");
-    int j;
+    /**
+     * Returns true if the terminal name is in the list of terminals we know
+     * are not able to understand basic escape sequences.
+     */
+    static bool is_unsupported_term()
+    {
+      auto term = std::getenv("TERM");
 
-    if (term == NULL) return 0;
-    for (j = 0; unsupported_term[j]; j++)
-        if (!strcasecmp(term,unsupported_term[j])) return 1;
-    return 0;
-}
-
-/* Raw mode: 1960 magic shit. */
-static int enableRawMode(int fd) {
-    struct termios raw;
-
-    if (!isatty(STDIN_FILENO)) goto fatal;
-    if (!atexit_registered) {
-        atexit(linenoiseAtExit);
-        atexit_registered = 1;
-    }
-    if (tcgetattr(fd,&orig_termios) == -1) goto fatal;
-
-    raw = orig_termios;  /* modify the original mode */
-    /* input modes: no break, no CR to NL, no parity check, no strip char,
-     * no start/stop output control. */
-    raw.c_iflag &= ~(BRKINT | ICRNL | INPCK | ISTRIP | IXON);
-    /* output modes - disable post processing */
-    raw.c_oflag &= ~(OPOST);
-    /* control modes - set 8 bit chars */
-    raw.c_cflag |= (CS8);
-    /* local modes - choing off, canonical off, no extended functions,
-     * no signal chars (^Z,^C) */
-    raw.c_lflag &= ~(ECHO | ICANON | IEXTEN | ISIG);
-    /* control chars - set return condition: min number of bytes and timer.
-     * We want read to return every single byte, without timeout. */
-    raw.c_cc[VMIN] = 1; raw.c_cc[VTIME] = 0; /* 1 byte, no timer */
-
-    /* put terminal in raw mode after flushing */
-    if (tcsetattr(fd,TCSAFLUSH,&raw) < 0) goto fatal;
-    rawmode = 1;
-    return 0;
-
-fatal:
-    errno = ENOTTY;
-    return -1;
-}
-
-static void disableRawMode(int fd) {
-    /* Don't even check the return value as it's too late. */
-    if (rawmode && tcsetattr(fd,TCSAFLUSH,&orig_termios) != -1)
-        rawmode = 0;
-}
-
-/* Use the ESC [6n escape sequence to query the horizontal cursor position
- * and return it. On error -1 is returned, on success the position of the
- * cursor. */
-static int getCursorPosition(int ifd, int ofd) {
-    char buf[32];
-    int cols, rows;
-    unsigned int i = 0;
-
-    /* Report cursor location */
-    if (write(ofd, "\x1b[6n", 4) != 4) return -1;
-
-    /* Read the response: ESC [ rows ; cols R */
-    while (i < sizeof(buf)-1) {
-        if (read(ifd,buf+i,1) != 1) break;
-        if (buf[i] == 'R') break;
-        i++;
-    }
-    buf[i] = '\0';
-
-    /* Parse it. */
-    if (buf[0] != ESC || buf[1] != '[') return -1;
-    if (sscanf(buf+2,"%d;%d",&rows,&cols) != 2) return -1;
-    return cols;
-}
-
-/* Try to get the number of columns in the current terminal, or assume 80
- * if it fails. */
-static int getColumns(int ifd, int ofd) {
-    struct winsize ws;
-
-    if (ioctl(1, TIOCGWINSZ, &ws) == -1 || ws.ws_col == 0) {
-        /* ioctl() failed. Try to query the terminal itself. */
-        int start, cols;
-
-        /* Get the initial position so we can restore it later. */
-        start = getCursorPosition(ifd,ofd);
-        if (start == -1) goto failed;
-
-        /* Go to right margin and get position. */
-        if (write(ofd,"\x1b[999C",6) != 6) goto failed;
-        cols = getCursorPosition(ifd,ofd);
-        if (cols == -1) goto failed;
-
-        /* Restore position. */
-        if (cols > start) {
-            char seq[32];
-            snprintf(seq,32,"\x1b[%dD",cols-start);
-            if (write(ofd,seq,strlen(seq)) == -1) {
-                /* Can't recover... */
-            }
+      if (!term)
+      {
+        return false;
+      }
+      for (int i = 0; unsupported_term[i]; ++i)
+      {
+        if (!::strcasecmp(term, unsupported_term[i]))
+        {
+          return true;
         }
-        return cols;
-    } else {
-        return ws.ws_col;
+      }
+
+      return false;
     }
 
-failed:
-    return 80;
-}
+    /**
+     * At exit we'll try to fix the terminal to the initial conditions.
+     */
+    static void atexit_callback()
+    {
+      disable_raw_mode(STDIN_FILENO);
+      freeHistory();
+    }
 
-namespace peelo
-{
-  namespace prompt
-  {
+    /**
+     * Raw mode: 1960 magic shit.
+     */
+    static bool enable_raw_mode(int fd)
+    {
+      ::termios raw;
+
+      if (!::isatty(STDIN_FILENO))
+      {
+        return false;
+      }
+
+      if (!atexit_registered)
+      {
+        std::atexit(atexit_callback);
+        atexit_registered = true;
+      }
+
+      if (::tcgetattr(fd, &original_termios) == -1)
+      {
+        return false;
+      }
+
+      // Modify the original one.
+      raw = original_termios;
+
+      // Input modes: No break, no CR to NL, no parity check, no strip char, no
+      // start/stop output control.
+      raw.c_iflag &= ~(BRKINT | ICRNL | INPCK | ISTRIP | IXON);
+
+      // Output modes: Disable post processing.
+      raw.c_oflag &= ~(OPOST);
+
+      // Control modes: Set 8 bit chars.
+      raw.c_cflag |= (CS8);
+
+      // Local modes: Echoing off, canonical off, no extended functions, no
+      // signal chars (^Z, ^C).
+      raw.c_lflag &= ~(ECHO | ICANON | IEXTEN | ISIG);
+
+      // Control chars: Set return condition: min number of bytes and timer. We
+      // want to read to return every single byte, without timeout.
+      raw.c_cc[VMIN] = 1;
+      raw.c_cc[VTIME] = 0;
+
+      // Put terminal in raw mode after flushing.
+      if (::tcsetattr(fd, TCSAFLUSH, &raw) < 0)
+      {
+        return false;
+      }
+
+      raw_mode = true;
+
+      return true;
+    }
+
+    static void disable_raw_mode(int fd)
+    {
+      if (raw_mode)
+      {
+        ::tcsetattr(fd, TCSAFLUSH, &original_termios);
+        raw_mode = false;
+      }
+    }
+
+    /**
+     * Use the ESC [6n escape sequence to query the horizontal cursor position
+     * and return it. On error, -1 is returned, on success the position of the
+     * cursor.
+     */
+    static int get_cursor_position(int ifd, int ofd)
+    {
+      char buffer[32];
+      int cols;
+      int rows;
+      std::size_t i = 0;
+
+      // Report cursor location.
+      if (::write(ofd, "\033[6n", 4) != 4)
+      {
+        return -1;
+      }
+
+      // Read the response: ESC [ rows ; cols R
+      while (i < sizeof(buffer))
+      {
+        if (::read(ifd, buffer + i, 1) != 1 || buffer[i] == 'R')
+        {
+          break;
+        }
+        ++i;
+      }
+      buffer[i] = '\0';
+
+      // Parse it.
+      if (buffer[0] != ESC || buffer[1] != '['
+          || std::sscanf(buffer + 2, "%d;%d", &rows, &cols) != 2)
+      {
+        return -1;
+      }
+
+      return cols;
+    }
+
+    /**
+     * Try to get the number of columns in the current terminal, or assume 80
+     * if it fails.
+     */
+    static int get_columns(int ifd, int ofd)
+    {
+      ::winsize ws;
+
+      if (::ioctl(1, TIOCGWINSZ, &ws) == -1 || ws.ws_col == 0)
+      {
+        // ioctl() failed. Try to query the terminal itself.
+        int start;
+        int cols;
+
+        // Get the initial position so we can restore it later.
+        if ((start = get_cursor_position(ifd, ofd)) == -1)
+        {
+          goto FAILED;
+        }
+
+        // Go right margin and get position.
+        if (::write(ofd, "\033[999C", 6) != 6)
+        {
+          goto FAILED;
+        }
+
+        if ((cols = get_cursor_position(ifd, ofd)) == -1)
+        {
+          goto FAILED;
+        }
+
+        // Restore position.
+        if (cols > start)
+        {
+          char sequence[32];
+
+          std::snprintf(sequence, 32, "\033[%dD", cols - start);
+          ::write(ofd, sequence, std::strlen(sequence));
+        }
+
+        return cols;
+      } else {
+        return ws.ws_col;
+      }
+
+FAILED:
+      return 80;
+    }
+
     void clear_screen()
     {
       ::write(STDOUT_FILENO, "\033[H\033[2J", 7);
@@ -802,7 +875,7 @@ static std::optional<std::string> linenoiseEdit(int stdin_fd,
   l.prompt = prompt;
   l.oldpos = l.pos = 0;
   l.len = 0;
-  l.cols = getColumns(stdin_fd, stdout_fd);
+  l.cols = peelo::prompt::get_columns(stdin_fd, stdout_fd);
   l.maxrows = 0;
   l.history_index = 0;
 
@@ -1009,7 +1082,7 @@ void linenoisePrintKeyCodes(void) {
 
     printf("Linenoise key codes debugging mode.\n"
             "Press keys to see scan codes. Type 'quit' at any time to exit.\n");
-    if (enableRawMode(STDIN_FILENO) == -1) return;
+    if (!peelo::prompt::enable_raw_mode(STDIN_FILENO)) return;
     memset(quit,' ',4);
     while(1) {
         char c;
@@ -1026,56 +1099,60 @@ void linenoisePrintKeyCodes(void) {
         printf("\r"); /* Go left edge manually, we are in raw mode. */
         fflush(stdout);
     }
-    disableRawMode(STDIN_FILENO);
-}
-
-/* This function calls the line editing function linenoiseEdit() using
- * the STDIN file descriptor set in raw mode. */
-static std::optional<std::string> linenoiseRaw(const std::string& prompt)
-{
-  std::optional<std::string> result;
-
-  if (enableRawMode(STDIN_FILENO) == -1)
-  {
-    return std::optional<std::string>();
-  }
-  result = linenoiseEdit(STDIN_FILENO, STDOUT_FILENO, prompt);
-  disableRawMode(STDIN_FILENO);
-  std::printf("\n");
-
-  return result;
-}
-
-/* This function is called when linenoise() is called with the standard
- * input file descriptor not attached to a TTY. So for example when the
- * program using linenoise is called in pipe or with a file redirected
- * to its standard input. In this case, we want to be able to return the
- * line regardless of its length (by default we are limited to 4k). */
-static std::optional<std::string> linenoiseNoTTY()
-{
-  std::string line;
-
-  for (;;)
-  {
-    const auto c = std::fgetc(stdin);
-
-    if (c == EOF || c == '\n')
-    {
-      if (c == EOF && line.empty())
-      {
-        return std::optional<std::string>();
-      }
-
-      return std::optional<std::string>(line);
-    }
-    line.append(1, static_cast<char>(c));
-  }
+    peelo::prompt::disable_raw_mode(STDIN_FILENO);
 }
 
 namespace peelo
 {
   namespace prompt
   {
+    /**
+     * This function calls the line editing function linenoiseEdit() using the
+     * STDIN file descriptor set in raw mode.
+     */
+    static value_type input_raw(const std::string& prompt)
+    {
+      value_type result;
+
+      if (!enable_raw_mode(STDIN_FILENO))
+      {
+        return value_type();
+      }
+      result = linenoiseEdit(STDIN_FILENO, STDOUT_FILENO, prompt);
+      disable_raw_mode(STDIN_FILENO);
+      std::printf("\n");
+
+      return result;
+    }
+
+    /**
+     * This function is called when input() is called with the standard input
+     * file descriptor not attached to a TTY. So for example when the program
+     * using this library is called in pipe or with a file redirected to it's
+     * standard input. In this case, we want to be able to return the line
+     * regardless of it's length.
+     */
+    static value_type input_no_tty()
+    {
+      std::string line;
+
+      for (;;)
+      {
+        const auto c = std::fgetc(stdin);
+
+        if (c == EOF || c == '\n')
+        {
+          if (c == EOF && line.empty())
+          {
+            return value_type();
+          }
+
+          return value_type(line);
+        }
+        line.append(1, static_cast<char>(c));
+      }
+    }
+
     // The high level function that is the main API of the linenoise library.
     // This function checks if the terminal has basic capabilities, just
     // checking for a blacklist of stupid terminals, and later either calls the
@@ -1083,13 +1160,13 @@ namespace peelo
     // type something even in the most desperate of the conditions.
     value_type input(const std::string& prompt)
     {
-      if (!isatty(STDIN_FILENO))
+      if (!::isatty(STDIN_FILENO))
       {
-        /* Not a tty: read from file / pipe. In this mode we don't want any
-         * limit to the line size, so we call a function to handle that. */
-        return linenoiseNoTTY();
+        // Not a TTY: Read from file / pipe. In this mode we don't want any
+        // limit to the line size, so we call a function to handle that.
+        return input_no_tty();
       }
-      else if (isUnsupportedTerm())
+      else if (is_unsupported_term())
       {
         char buffer[LINENOISE_MAX_LINE];
         std::size_t length;
@@ -1098,7 +1175,7 @@ namespace peelo
         std::fflush(stdout);
         if (!std::fgets(buffer, LINENOISE_MAX_LINE, stdin))
         {
-          return std::optional<std::string>();
+          return value_type();
         }
         length = std::strlen(buffer);
         while (length && (buffer[length-1] == '\n' || buffer[length-1] == '\r'))
@@ -1107,10 +1184,10 @@ namespace peelo
           buffer[length] = '\0';
         }
 
-        return std::optional<std::string>(std::string(buffer, length));
+        return value_type(std::string(buffer, length));
       }
 
-      return linenoiseRaw(prompt);
+      return input_raw(prompt);
     }
   }
 }
@@ -1127,12 +1204,6 @@ static void freeHistory(void) {
             free(history[j]);
         free(history);
     }
-}
-
-/* At exit we'll try to fix the terminal to the initial conditions. */
-static void linenoiseAtExit(void) {
-    disableRawMode(STDIN_FILENO);
-    freeHistory();
 }
 
 /* This is the API call to add a new entry in the linenoise history.
