@@ -144,7 +144,6 @@ struct linenoiseState {
   int history_index;  /* The history index we are currently editing. */
 };
 
-static void refreshLine(linenoiseState&);
 static void freeHistory();
 
 /* Debugging macro. */
@@ -207,6 +206,8 @@ namespace peelo
       key_esc = 27,
       key_backspace = 127
     };
+
+    static void refresh(linenoiseState&);
 
     bool is_multi_line()
     {
@@ -455,12 +456,12 @@ FAILED:
 
               state.len = state.pos = completion.length();
               std::strncpy(state.buf, completion.c_str(), state.buflen);
-              refreshLine(state);
+              refresh(state);
               state.len = saved.len;
               state.pos = saved.pos;
               std::strncpy(state.buf, saved.buf, state.buflen);
             } else {
-              refreshLine(state);
+              refresh(state);
             }
 
             if (::read(state.ifd, &c, 1) <= 0)
@@ -482,7 +483,7 @@ FAILED:
                 // Re-show original buffer.
                 if (i < completions.size())
                 {
-                  refreshLine(state);
+                  refresh(state);
                 }
                 stop = true;
                 break;
@@ -531,39 +532,11 @@ void linenoiseSetFreeHintsCallback(linenoiseFreeHintsCallback *fn) {
 
 /* =========================== Line editing ================================= */
 
-/* We define a very simple "append buffer" structure, that is an heap
- * allocated string where we can append to. This is useful in order to
- * write all the escape sequences in a buffer and flush them to the standard
- * output in a single call, to avoid flickering effects. */
-struct abuf {
-    char *b;
-    int len;
-};
-
-static void abInit(struct abuf *ab) {
-    ab->b = NULL;
-    ab->len = 0;
-}
-
-static void abAppend(struct abuf *ab, const char *s, int len) {
-    char *neww = static_cast<char*>(realloc(ab->b,ab->len+len));
-
-    if (neww == NULL) return;
-    memcpy(neww+ab->len,s,len);
-    ab->b = neww;
-    ab->len += len;
-}
-
-static void abFree(struct abuf *ab) {
-    free(ab->b);
-}
-
 /* Helper of refreshSingleLine() and refreshMultiLine() to show hints
  * to the right of the prompt. */
-static void refreshShowHints(struct abuf* ab,
-                             linenoiseState& l,
-                             std::size_t plen)
+static void refreshShowHints(std::string& buffer, linenoiseState& l)
 {
+  const auto plen = l.prompt.length();
   char seq[64];
   peelo::prompt::color color = peelo::prompt::color::none;
   bool bold = false;
@@ -598,11 +571,11 @@ static void refreshShowHints(struct abuf* ab,
     } else {
       seq[0] = '\0';
     }
-    abAppend(ab,seq,strlen(seq));
-    abAppend(ab,hint,hintlen);
+    buffer.append(seq, std::strlen(seq));
+    buffer.append(hint, hintlen);
     if (color != peelo::prompt::color::none || bold)
     {
-      abAppend(ab, "\033[0m", 4);
+      buffer.append("\033[0m", 4);
     }
 
     // Call the function to free the hint returned.
@@ -613,152 +586,169 @@ static void refreshShowHints(struct abuf* ab,
   }
 }
 
-/* Single line low level line refresh.
- *
- * Rewrite the currently edited line accordingly to the buffer content,
- * cursor position, and number of columns of the terminal. */
-static void refreshSingleLine(struct linenoiseState *l) {
-    char seq[64];
-    auto plen = l->prompt.length();
-    int fd = l->ofd;
-    char *buf = l->buf;
-    size_t len = l->len;
-    size_t pos = l->pos;
-    struct abuf ab;
-
-    while((plen+pos) >= l->cols) {
-        buf++;
-        len--;
-        pos--;
-    }
-    while (plen+len > l->cols) {
-        len--;
-    }
-
-    abInit(&ab);
-    /* Cursor to left edge */
-    snprintf(seq,64,"\r");
-    abAppend(&ab,seq,strlen(seq));
-    /* Write the prompt and the current buffer content */
-    abAppend(&ab, l->prompt.c_str(), l->prompt.length());
-    abAppend(&ab,buf,len);
-    /* Show hits if any. */
-    refreshShowHints(&ab, *l, plen);
-    /* Erase to right */
-    snprintf(seq,64,"\x1b[0K");
-    abAppend(&ab,seq,strlen(seq));
-    /* Move cursor to original position. */
-    snprintf(seq,64,"\r\x1b[%dC", (int)(pos+plen));
-    abAppend(&ab,seq,strlen(seq));
-    if (write(fd,ab.b,ab.len) == -1) {} /* Can't recover from write error. */
-    abFree(&ab);
-}
-
-/* Multi line low level line refresh.
- *
- * Rewrite the currently edited line accordingly to the buffer content,
- * cursor position, and number of columns of the terminal. */
-static void refreshMultiLine(struct linenoiseState *l) {
-    char seq[64];
-    auto plen = l->prompt.length();
-    int rows = (plen+l->len+l->cols-1)/l->cols; /* rows used by current buf. */
-    int rpos = (plen+l->oldpos+l->cols)/l->cols; /* cursor relative row. */
-    int rpos2; /* rpos after refresh. */
-    int col; /* colum position, zero-based. */
-    int old_rows = l->maxrows;
-    int fd = l->ofd, j;
-    struct abuf ab;
-
-    /* Update maxrows if needed. */
-    if (rows > (int)l->maxrows) l->maxrows = rows;
-
-    /* First step: clear all the lines used before. To do so start by
-     * going to the last row. */
-    abInit(&ab);
-    if (old_rows-rpos > 0) {
-        lndebug("go down %d", old_rows-rpos);
-        snprintf(seq,64,"\x1b[%dB", old_rows-rpos);
-        abAppend(&ab,seq,strlen(seq));
-    }
-
-    /* Now for every row clear it, go up. */
-    for (j = 0; j < old_rows-1; j++) {
-        lndebug("clear+up");
-        snprintf(seq,64,"\r\x1b[0K\x1b[1A");
-        abAppend(&ab,seq,strlen(seq));
-    }
-
-    /* Clean the top line. */
-    lndebug("clear");
-    snprintf(seq,64,"\r\x1b[0K");
-    abAppend(&ab,seq,strlen(seq));
-
-    /* Write the prompt and the current buffer content */
-    abAppend(&ab, l->prompt.c_str(), l->prompt.length());
-    abAppend(&ab,l->buf,l->len);
-
-    /* Show hits if any. */
-    refreshShowHints(&ab, *l, plen);
-
-    /* If we are at the very end of the screen with our prompt, we need to
-     * emit a newline and move the prompt to the first column. */
-    if (l->pos &&
-        l->pos == l->len &&
-        (l->pos+plen) % l->cols == 0)
-    {
-        lndebug("<newline>");
-        abAppend(&ab,"\n",1);
-        snprintf(seq,64,"\r");
-        abAppend(&ab,seq,strlen(seq));
-        rows++;
-        if (rows > (int)l->maxrows) l->maxrows = rows;
-    }
-
-    /* Move cursor to right position. */
-    rpos2 = (plen+l->pos+l->cols)/l->cols; /* current cursor relative row. */
-    lndebug("rpos2 %d", rpos2);
-
-    /* Go up till we reach the expected positon. */
-    if (rows-rpos2 > 0) {
-        lndebug("go-up %d", rows-rpos2);
-        snprintf(seq,64,"\x1b[%dA", rows-rpos2);
-        abAppend(&ab,seq,strlen(seq));
-    }
-
-    /* Set column. */
-    col = (plen+(int)l->pos) % (int)l->cols;
-    lndebug("set col %d", 1+col);
-    if (col)
-        snprintf(seq,64,"\r\x1b[%dC", col);
-    else
-        snprintf(seq,64,"\r");
-    abAppend(&ab,seq,strlen(seq));
-
-    lndebug("\n");
-    l->oldpos = l->pos;
-
-    if (write(fd,ab.b,ab.len) == -1) {} /* Can't recover from write error. */
-    abFree(&ab);
-}
-
-/**
- * Calls the two low level functions refreshSingleLine() or refreshMultiLine()
- * according to the selected mode.
- */
-static void refreshLine(linenoiseState& state)
-{
-  if (peelo::prompt::multi_line)
-  {
-    refreshMultiLine(&state);
-  } else {
-    refreshSingleLine(&state);
-  }
-}
-
 namespace peelo
 {
   namespace prompt
   {
+    /**
+     * Single line low level line refresh.
+     *
+     * Rewrite the currently edited line accordingly to the buffer content,
+     * cursor position and number of columns of the terminal.
+     */
+    static void refresh_single_line(linenoiseState& state)
+    {
+      char seq[64];
+      auto plen = state.prompt.length();
+      const auto fd = state.ofd;
+      auto buf = state.buf;
+      auto len = state.len;
+      auto pos = state.pos;
+      std::string buffer;
+
+      while ((plen + pos) >= state.cols)
+      {
+        ++buf;
+        --len;
+        --pos;
+      }
+      while (plen + len > state.cols)
+      {
+        --len;
+      }
+
+      // Cursor to left edge.
+      buffer.append(1, '\r');
+
+      // Write the prompt and the current buffer content.
+      buffer.append(state.prompt);
+      buffer.append(buf, len);
+
+      // Show hits if any.
+      refreshShowHints(buffer, state);
+
+      // Erase to right.
+      buffer.append("\033[0K");
+
+      // Move cursor to original position. */
+      std::snprintf(seq, 64, "\r\x1b[%dC", static_cast<int>(pos + plen));
+      buffer.append(seq, std::strlen(seq));
+
+      ::write(fd, buffer.c_str(), buffer.length());
+    }
+
+    /**
+     * Multi line low level line refresh.
+     *
+     * Rewrite the currently edited line accordingly to the buffer content,
+     * cursor position and number of columns of the terminal.
+     */
+    static void refresh_multi_line(linenoiseState& state)
+    {
+      char seq[64];
+      auto plen = state.prompt.length();
+      // Rows used by current buf.
+      int rows = (plen + state.len + state.cols - 1) / state.cols;
+      // Cursor relative row.
+      int rpos = (plen + state.oldpos + state.cols) / state.cols;
+      // rpos after refresh.
+      int rpos2;
+      // Column position, zero based.
+      int col;
+      const int old_rows = state.maxrows;
+      const int fd = state.ofd;
+      std::string buffer;
+
+      // Update maxrows if needed.
+      if (rows > static_cast<int>(state.maxrows))
+      {
+        state.maxrows = rows;
+      }
+
+      // First step: Clear all the lines used before. To do so start by going
+      // to the last row.
+      if (old_rows - rpos > 0)
+      {
+        lndebug("go down %d", old_rows - rpos);
+        std::snprintf(seq, 64, "\x1b[%dB", old_rows - rpos);
+        buffer.append(seq, std::strlen(seq));
+      }
+
+      // Now for every row clear it, go up.
+      for (int j = 0; j < old_rows - 1; ++j)
+      {
+        lndebug("clear+up");
+        buffer.append("\r\x1b[0K\x1b[1A");
+      }
+
+      // Clean the top line.
+      lndebug("clear");
+      buffer.append("\r\x1b[0K");
+
+      // Write the prompt and the current buffer content.
+      buffer.append(state.prompt);
+      buffer.append(state.buf, state.len);
+
+      // Show hits if any.
+      refreshShowHints(buffer, state);
+
+      // If we are at the very end of the screen with our prompt, we need to
+      // emit a newline and move the prompt to the first column.
+      if (state.pos &&
+          state.pos == state.len &&
+          (state.pos + plen) % state.cols == 0)
+      {
+        lndebug("<newline>");
+        buffer.append("\n\r");
+        if (++rows > static_cast<int>(state.maxrows))
+        {
+          state.maxrows = rows;
+        }
+      }
+
+      // Move cursor to right position.
+      rpos2 = ( plen + state.pos + state.cols) / state.cols;
+      lndebug("rpos2 %d", rpos2);
+
+      // Go up till we reach the expected positon.
+      if (rows-rpos2 > 0)
+      {
+        lndebug("go-up %d", rows-rpos2);
+        std::snprintf(seq, 64, "\x1b[%dA", rows - rpos2);
+        buffer.append(seq, std::strlen(seq));
+      }
+
+      // Set column.
+      col = (plen + static_cast<int>(state.pos)) % static_cast<int>(state.cols);
+      lndebug("set col %d", 1+col);
+      if (col)
+      {
+        std::snprintf(seq, 64, "\r\x1b[%dC", col);
+      } else {
+        std::snprintf(seq, 64, "\r");
+      }
+      buffer.append(seq, std::strlen(seq));
+
+      lndebug("\n");
+      state.oldpos = state.pos;
+
+      ::write(fd, buffer.c_str(), buffer.length());
+    }
+
+    /**
+     * Calls the two low level functions refresh_single_line() or
+     * refresh_multi_line() according to the selected mode.
+     */
+    static void refresh(linenoiseState& state)
+    {
+      if (multi_line)
+      {
+        refresh_multi_line(state);
+      } else {
+        refresh_single_line(state);
+      }
+    }
+
     /**
      * Insert the character 'c' at cursor's current position. On error writing
      * to the terminal, false is returned, otherwise true.
@@ -783,7 +773,7 @@ namespace peelo
               return false;
             }
           } else {
-            refreshLine(state);
+            refresh(state);
           }
         } else {
           std::memmove(
@@ -795,7 +785,7 @@ namespace peelo
           ++state.len;
           ++state.pos;
           state.buf[state.len] = '\0';
-          refreshLine(state);
+          refresh(state);
         }
       }
 
@@ -810,7 +800,7 @@ namespace peelo
       if (state.pos > 0)
       {
         --state.pos;
-        refreshLine(state);
+        refresh(state);
       }
     }
 
@@ -822,7 +812,7 @@ namespace peelo
       if (state.pos != state.len)
       {
         ++state.pos;
-        refreshLine(state);
+        refresh(state);
       }
     }
 
@@ -834,7 +824,7 @@ namespace peelo
       if (state.pos != 0)
       {
         state.pos = 0;
-        refreshLine(state);
+        refresh(state);
       }
     }
 
@@ -846,7 +836,7 @@ namespace peelo
       if (state.pos != state.len)
       {
         state.pos = state.len;
-        refreshLine(state);
+        refresh(state);
       }
     }
 
@@ -883,7 +873,7 @@ namespace peelo
       );
       state.buf[state.buflen - 1] = '\0';
       state.len = state.pos = std::strlen(state.buf);
-      refreshLine(state);
+      refresh(state);
     }
 
     /**
@@ -902,7 +892,7 @@ namespace peelo
         );
         --state.len;
         state.buf[state.len] = '\0';
-        refreshLine(state);
+        refresh(state);
       }
     }
 
@@ -921,7 +911,7 @@ namespace peelo
         --state.pos;
         --state.len;
         state.buf[state.len] = '\0';
-        refreshLine(state);
+        refresh(state);
       }
     }
 
@@ -949,7 +939,7 @@ namespace peelo
         state.len - old_pos + 1
       );
       state.len -= diff;
-      refreshLine(state);
+      refresh(state);
     }
 
     /**
@@ -967,7 +957,7 @@ namespace peelo
         {
           ++state.pos;
         }
-        refreshLine(state);
+        refresh(state);
       }
     }
 
@@ -979,7 +969,7 @@ namespace peelo
       state.buf[0] = '\0';
       state.pos = 0;
       state.len = 0;
-      refreshLine(state);
+      refresh(state);
     }
 
     /**
@@ -989,7 +979,7 @@ namespace peelo
     {
       state.buf[state.pos] = '\0';
       state.len = state.pos;
-      refreshLine(state);
+      refresh(state);
     }
 
     /**
@@ -1149,7 +1139,7 @@ namespace peelo
               const auto callback = hintsCallback;
 
               hintsCallback = nullptr;
-              refreshLine(state);
+              refresh(state);
               hintsCallback = callback;
             }
             return value_type(std::string(state.buf, state.len));
@@ -1218,7 +1208,7 @@ namespace peelo
 
           case key_ctrl_l:
             clear_screen();
-            refreshLine(state);
+            refresh(state);
             break;
 
           case key_ctrl_w:
