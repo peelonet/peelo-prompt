@@ -41,6 +41,16 @@
 #include <optional>
 #include <string>
 
+namespace peelo
+{
+  namespace prompt
+  {
+    using value_type = std::optional<std::string>;
+
+    value_type input(const std::string& prompt);
+  }
+}
+
 typedef struct linenoiseCompletions {
   std::size_t len;
   char **cvec;
@@ -54,7 +64,6 @@ void linenoiseSetHintsCallback(linenoiseHintsCallback *);
 void linenoiseSetFreeHintsCallback(linenoiseFreeHintsCallback *);
 void linenoiseAddCompletion(linenoiseCompletions *, const char *);
 
-std::optional<std::string> linenoise(const std::string& prompt);
 int linenoiseHistoryAdd(const char *line);
 int linenoiseHistorySetMaxLen(int len);
 int linenoiseHistorySave(const char *filename);

@@ -1050,41 +1050,47 @@ static std::optional<std::string> linenoiseNoTTY()
   }
 }
 
-/* The high level function that is the main API of the linenoise library.
- * This function checks if the terminal has basic capabilities, just checking
- * for a blacklist of stupid terminals, and later either calls the line
- * editing function or uses dummy fgets() so that you will be able to type
- * something even in the most desperate of the conditions. */
-std::optional<std::string> linenoise(const std::string& prompt)
+namespace peelo
 {
-  if (!isatty(STDIN_FILENO))
+  namespace prompt
   {
-    /* Not a tty: read from file / pipe. In this mode we don't want any
-     * limit to the line size, so we call a function to handle that. */
-    return linenoiseNoTTY();
-  }
-  else if (isUnsupportedTerm())
-  {
-    char buffer[LINENOISE_MAX_LINE];
-    std::size_t length;
-
-    std::printf("%s", prompt.c_str());
-    std::fflush(stdout);
-    if (!std::fgets(buffer, LINENOISE_MAX_LINE, stdin))
+    // The high level function that is the main API of the linenoise library.
+    // This function checks if the terminal has basic capabilities, just
+    // checking for a blacklist of stupid terminals, and later either calls the
+    // line editing function or uses dummy fgets() so that you will be able to
+    // type something even in the most desperate of the conditions.
+    value_type input(const std::string& prompt)
     {
-      return std::optional<std::string>();
-    }
-    length = std::strlen(buffer);
-    while (length && (buffer[length-1] == '\n' || buffer[length-1] == '\r'))
-    {
-      --length;
-      buffer[length] = '\0';
-    }
+      if (!isatty(STDIN_FILENO))
+      {
+        /* Not a tty: read from file / pipe. In this mode we don't want any
+         * limit to the line size, so we call a function to handle that. */
+        return linenoiseNoTTY();
+      }
+      else if (isUnsupportedTerm())
+      {
+        char buffer[LINENOISE_MAX_LINE];
+        std::size_t length;
 
-    return std::optional<std::string>(std::string(buffer, length));
+        std::printf("%s", prompt.c_str());
+        std::fflush(stdout);
+        if (!std::fgets(buffer, LINENOISE_MAX_LINE, stdin))
+        {
+          return std::optional<std::string>();
+        }
+        length = std::strlen(buffer);
+        while (length && (buffer[length-1] == '\n' || buffer[length-1] == '\r'))
+        {
+          --length;
+          buffer[length] = '\0';
+        }
+
+        return std::optional<std::string>(std::string(buffer, length));
+      }
+
+      return linenoiseRaw(prompt);
+    }
   }
-
-  return linenoiseRaw(prompt);
 }
 
 /* ================================ History ================================= */

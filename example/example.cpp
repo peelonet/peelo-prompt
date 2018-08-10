@@ -69,7 +69,7 @@ int main(int argc, char** argv)
   //
   // The typed string is returned as a malloc() allocated string by
   // linenoise, so the user needs to free() it.
-  while (auto line = linenoise("hello> "))
+  while (auto line = peelo::prompt::input("hello> "))
   {
     const auto value = line.value();
 
