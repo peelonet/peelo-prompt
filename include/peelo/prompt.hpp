@@ -119,6 +119,5 @@ int linenoiseHistoryAdd(const char *line);
 int linenoiseHistorySetMaxLen(int len);
 int linenoiseHistorySave(const char *filename);
 int linenoiseHistoryLoad(const char *filename);
-void linenoisePrintKeyCodes(void);
 
 #endif /* !PEELO_PROMPT_HPP_GUARD */
