@@ -3,6 +3,12 @@ PROJECT(peelocpp_prompt CXX)
 
 INCLUDE(GNUInstallDirs)
 
+OPTION(
+  PEELOCPP_PROMPT_BUILD_EXAMPLE
+  "Whether the example application should be built or not."
+  OFF
+)
+
 ADD_LIBRARY(
   peelocpp_prompt
   src/prompt.cpp
@@ -45,3 +51,7 @@ INSTALL(
     FILES_MATCHING PATTERN
       "*.hpp"
 )
+
+IF(PEELOCPP_PROMPT_BUILD_EXAMPLE)
+  ADD_SUBDIRECTORY(example)
+ENDIF()
