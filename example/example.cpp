@@ -4,19 +4,6 @@
 
 #include <peelo/prompt.hpp>
 
-char* hints(const char* buf, peelo::prompt::color& color, bool& bold)
-{
-  if (!strcasecmp(buf, "hello"))
-  {
-    color = peelo::prompt::color::magenta;
-    bold = false;
-
-    return strdup(" World");
-  }
-
-  return NULL;
-}
-
 int main(int argc, char** argv)
 {
   const auto prgname = argv[0];
@@ -57,7 +44,24 @@ int main(int argc, char** argv)
     }
   );
 
-  linenoiseSetHintsCallback(hints);
+  peelo::prompt::hints::set_callback(
+    [] (
+      const std::string& buf,
+      peelo::prompt::color& color,
+      bool& bold
+    ) -> peelo::prompt::hints::value_type
+    {
+      if (!strcasecmp(buf.c_str(), "hello"))
+      {
+        color = peelo::prompt::color::magenta;
+        bold = false;
+
+        return " World";
+      }
+
+      return peelo::prompt::hints::value_type();
+    }
+  );
 
   // Load history from file. The history file is just a plain text file
   // where entries are separated by newlines.

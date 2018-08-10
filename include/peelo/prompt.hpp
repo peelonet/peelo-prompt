@@ -96,17 +96,24 @@ namespace peelo
        */
       void set_callback(const std::optional<callback_type>& callback);
     }
+
+    namespace hints
+    {
+      using value_type = std::optional<std::string>;
+      using callback_type = std::function<value_type(
+        const std::string& buffer,
+        color& col,
+        bool& bold
+      )>;
+
+      /**
+       * Register a callback to be called to display hints to the user at the
+       * right of the prompt.
+       */
+      void set_callback(const std::optional<callback_type>& callback);
+    }
   }
 }
-
-typedef char*(linenoiseHintsCallback)(
-  const char* buffer,
-  peelo::prompt::color& color,
-  bool& bold
-);
-typedef void(linenoiseFreeHintsCallback)(void *);
-void linenoiseSetHintsCallback(linenoiseHintsCallback *);
-void linenoiseSetFreeHintsCallback(linenoiseFreeHintsCallback *);
 
 int linenoiseHistoryAdd(const char *line);
 int linenoiseHistorySetMaxLen(int len);

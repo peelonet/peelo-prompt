@@ -117,9 +117,6 @@
 
 #define LINENOISE_DEFAULT_HISTORY_MAX_LEN 100
 #define LINENOISE_MAX_LINE 4096
-static linenoiseHintsCallback *hintsCallback = NULL;
-static linenoiseFreeHintsCallback *freeHintsCallback = NULL;
-
 static int history_max_len = LINENOISE_DEFAULT_HISTORY_MAX_LEN;
 static int history_len = 0;
 static char **history = NULL;
@@ -515,81 +512,70 @@ FAILED:
         callback = cb;
       }
     }
-  }
-}
 
-/* Register a hits function to be called to show hits to the user at the
- * right of the prompt. */
-void linenoiseSetHintsCallback(linenoiseHintsCallback *fn) {
-    hintsCallback = fn;
-}
-
-/* Register a function to free the hints returned by the hints callback
- * registered with linenoiseSetHintsCallback(). */
-void linenoiseSetFreeHintsCallback(linenoiseFreeHintsCallback *fn) {
-    freeHintsCallback = fn;
-}
-
-/* =========================== Line editing ================================= */
-
-/* Helper of refreshSingleLine() and refreshMultiLine() to show hints
- * to the right of the prompt. */
-static void refreshShowHints(std::string& buffer, linenoiseState& l)
-{
-  const auto plen = l.prompt.length();
-  char seq[64];
-  peelo::prompt::color color = peelo::prompt::color::none;
-  bool bold = false;
-  char* hint;
-
-  if (!hintsCallback || plen + l.len >= l.cols)
-  {
-    return;
-  }
-  if ((hint = hintsCallback(l.buf, color, bold)))
-  {
-    auto hintlen = std::strlen(hint);
-    auto hintmaxlen = l.cols - (plen + l.len);
-
-    if (hintlen > hintmaxlen)
+    namespace hints
     {
-      hintlen = hintmaxlen;
-    }
-    if (bold && color == peelo::prompt::color::none)
-    {
-      color = peelo::prompt::color::white;
-    }
-    if (color != peelo::prompt::color::none || bold)
-    {
-      std::snprintf(
-        seq,
-        64,
-        "\033[%d;%d;49m",
-        bold ? 1 : 0,
-        static_cast<int>(color)
-      );
-    } else {
-      seq[0] = '\0';
-    }
-    buffer.append(seq, std::strlen(seq));
-    buffer.append(hint, hintlen);
-    if (color != peelo::prompt::color::none || bold)
-    {
-      buffer.append("\033[0m", 4);
+      static std::optional<callback_type> callback;
+
+      void set_callback(const std::optional<callback_type>& cb)
+      {
+        callback = cb;
+      }
+
+      /**
+       * Helper of refresh_single_line() and refresh_multi_line() to show hints
+       * to the right of the prompt.
+       */
+      static void show(std::string& buffer, linenoiseState& state)
+      {
+        const auto plen = state.prompt.length();
+        char seq[64];
+        color col = color::none;
+        bool bold = false;
+
+        if (!callback || plen + state.len >= state.cols)
+        {
+          return;
+        }
+
+        if (auto hint = (*callback)(std::string(state.buf, state.len),
+                                    col,
+                                    bold))
+        {
+          const auto& value = hint.value();
+          auto hintlen = value.length();
+          auto hintmaxlen = state.cols - (plen + state.len);
+
+          if (hintlen > hintmaxlen)
+          {
+            hintlen = hintmaxlen;
+          }
+          if (bold && col == color::none)
+          {
+            col = color::white;
+          }
+          if (col != color::none || bold)
+          {
+            std::snprintf(
+              seq,
+              64,
+              "\033[%d;%d;49m",
+              bold ? 1 : 0,
+              static_cast<int>(col)
+            );
+          } else {
+            seq[0] = '\0';
+          }
+          buffer.append(seq, std::strlen(seq));
+          buffer.append(std::begin(value), std::begin(value) + hintlen);
+          if (col != color::none || bold)
+          {
+            buffer.append("\033[0m", 4);
+          }
+        }
+      }
     }
 
-    // Call the function to free the hint returned.
-    if (freeHintsCallback)
-    {
-      freeHintsCallback(hint);
-    }
-  }
-}
-
-namespace peelo
-{
-  namespace prompt
-  {
     /**
      * Single line low level line refresh.
      *
@@ -625,7 +611,7 @@ namespace peelo
       buffer.append(buf, len);
 
       // Show hits if any.
-      refreshShowHints(buffer, state);
+      hints::show(buffer, state);
 
       // Erase to right.
       buffer.append("\033[0K");
@@ -690,7 +676,7 @@ namespace peelo
       buffer.append(state.buf, state.len);
 
       // Show hits if any.
-      refreshShowHints(buffer, state);
+      hints::show(buffer, state);
 
       // If we are at the very end of the screen with our prompt, we need to
       // emit a newline and move the prompt to the first column.
@@ -765,7 +751,7 @@ namespace peelo
           state.buf[state.len] = '\0';
           if (!peelo::prompt::multi_line
               && state.prompt.length() + state.len < state.cols
-              && !hintsCallback)
+              && !hints::callback)
           {
             // Avoid a full update of the line in the trivial case.
             if (::write(state.ofd, &c, 1) == -1)
@@ -1132,15 +1118,15 @@ namespace peelo
             {
               move_end(state);
             }
-            if (hintsCallback)
+            if (hints::callback)
             {
               // Force a refresh without hints to leave the previous line as
               // the user typed it after a newline.
-              const auto callback = hintsCallback;
+              const auto callback = hints::callback;
 
-              hintsCallback = nullptr;
+              hints::callback.reset();
               refresh(state);
-              hintsCallback = callback;
+              hints::callback = callback;
             }
             return value_type(std::string(state.buf, state.len));
 
