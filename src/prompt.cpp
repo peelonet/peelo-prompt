@@ -121,26 +121,6 @@ static int history_max_len = LINENOISE_DEFAULT_HISTORY_MAX_LEN;
 static int history_len = 0;
 static char **history = NULL;
 
-/* The linenoiseState structure represents the state during line editing.
- * We pass this state to functions implementing specific editing
- * functionalities. */
-struct linenoiseState {
-  int ifd;            /* Terminal stdin file descriptor. */
-  int ofd;            /* Terminal stdout file descriptor. */
-  /** Edited line buffer. */
-  char buf[LINENOISE_MAX_LINE];
-  /** Size of the line buffer. */
-  std::size_t buflen;
-  /** Prompt to display. */
-  std::string prompt;
-  size_t pos;         /* Current cursor position. */
-  size_t oldpos;      /* Previous refresh cursor position. */
-  size_t len;         /* Current edited line length. */
-  size_t cols;        /* Number of columns in terminal. */
-  size_t maxrows;     /* Maximum num of rows used so far (multiline mode) */
-  int history_index;  /* The history index we are currently editing. */
-};
-
 static void freeHistory();
 
 /* Debugging macro. */
@@ -204,7 +184,41 @@ namespace peelo
       key_backspace = 127
     };
 
-    static void refresh(linenoiseState&);
+    /**
+     * The input state structure represents the state during line editing. We
+     * pass this state to functions implementing specific editing
+     * functionalities.
+     */
+    namespace
+    {
+      struct input_state
+      {
+        /** Terminal stdin file descriptor. */
+        int ifd;
+        /** Terminal stdout file descriptor. */
+        int ofd;
+        /** Edited line buffer. */
+        char buf[LINENOISE_MAX_LINE];
+        /** Size of the line buffer. */
+        std::size_t buflen;
+        /** Prompt to display. */
+        std::string prompt;
+        /** Current cursor position. */
+        std::size_t pos;
+        /** Previous refresh cursor position. */
+        std::size_t oldpos;
+        /** Current edited line length. */
+        std::size_t len;
+        /** Number of columns in terminal. */
+        std::size_t cols;
+        /** Maximum number of rows used so far (multiline mode). */
+        std::size_t maxrows;
+        /** The history index we are currently editing. */
+        int history_index;
+      };
+    }
+
+    static void refresh(input_state&);
 
     bool is_multi_line()
     {
@@ -426,7 +440,7 @@ FAILED:
       //
       // The state of the editing is encapsulated into the pointed input state
       // structure as described in the structure definition.
-      static int complete_line(struct linenoiseState& state)
+      static int complete_line(input_state& state)
       {
         container_type completions;
         int c;
@@ -449,7 +463,7 @@ FAILED:
             if (i < completions.size())
             {
               const auto& completion = completions[i];
-              linenoiseState saved = state;
+              input_state saved = state;
 
               state.len = state.pos = completion.length();
               std::strncpy(state.buf, completion.c_str(), state.buflen);
@@ -526,7 +540,7 @@ FAILED:
        * Helper of refresh_single_line() and refresh_multi_line() to show hints
        * to the right of the prompt.
        */
-      static void show(std::string& buffer, linenoiseState& state)
+      static void show(std::string& buffer, input_state& state)
       {
         const auto plen = state.prompt.length();
         char seq[64];
@@ -582,7 +596,7 @@ FAILED:
      * Rewrite the currently edited line accordingly to the buffer content,
      * cursor position and number of columns of the terminal.
      */
-    static void refresh_single_line(linenoiseState& state)
+    static void refresh_single_line(input_state& state)
     {
       char seq[64];
       auto plen = state.prompt.length();
@@ -629,7 +643,7 @@ FAILED:
      * Rewrite the currently edited line accordingly to the buffer content,
      * cursor position and number of columns of the terminal.
      */
-    static void refresh_multi_line(linenoiseState& state)
+    static void refresh_multi_line(input_state& state)
     {
       char seq[64];
       auto plen = state.prompt.length();
@@ -725,7 +739,7 @@ FAILED:
      * Calls the two low level functions refresh_single_line() or
      * refresh_multi_line() according to the selected mode.
      */
-    static void refresh(linenoiseState& state)
+    static void refresh(input_state& state)
     {
       if (multi_line)
       {
@@ -739,7 +753,7 @@ FAILED:
      * Insert the character 'c' at cursor's current position. On error writing
      * to the terminal, false is returned, otherwise true.
      */
-    static bool insert(linenoiseState& state, char c)
+    static bool insert(input_state& state, char c)
     {
       if (state.len < state.buflen)
       {
@@ -781,7 +795,7 @@ FAILED:
     /**
      * Move cursor on the left.
      */
-    static void move_left(linenoiseState& state)
+    static void move_left(input_state& state)
     {
       if (state.pos > 0)
       {
@@ -793,7 +807,7 @@ FAILED:
     /**
      * Move cursor on the right.
      */
-    static void move_right(linenoiseState& state)
+    static void move_right(input_state& state)
     {
       if (state.pos != state.len)
       {
@@ -805,7 +819,7 @@ FAILED:
     /**
      * Move cursor to the start of the line.
      */
-    static void move_home(linenoiseState& state)
+    static void move_home(input_state& state)
     {
       if (state.pos != 0)
       {
@@ -817,7 +831,7 @@ FAILED:
     /**
      * Move cursor to the end of the line.
      */
-    static void move_end(linenoiseState& state)
+    static void move_end(input_state& state)
     {
       if (state.pos != state.len)
       {
@@ -830,7 +844,7 @@ FAILED:
      * Substitute the currently edited line with the next or previous history
      * entry as specified by 'direction'.
      */
-    static void edit_history_next(linenoiseState& state, bool direction)
+    static void edit_history_next(input_state& state, bool direction)
     {
       if (history_len < 2)
       {
@@ -867,7 +881,7 @@ FAILED:
      * cursor position. Basically this is what happens with the "Delete"
      * keyboard key.
      */
-    static void delete_next_char(linenoiseState& state)
+    static void delete_next_char(input_state& state)
     {
       if (state.len > 0 && state.pos < state.len)
       {
@@ -885,7 +899,7 @@ FAILED:
     /**
      * Backspace implementation.
      */
-    static void delete_previous_char(linenoiseState& state)
+    static void delete_previous_char(input_state& state)
     {
       if (state.pos > 0 && state.len > 0)
       {
@@ -905,7 +919,7 @@ FAILED:
      * Delete the previous word, maintaining the cursor at the start of the
      * current word.
      */
-    static void delete_previous_word(linenoiseState& state)
+    static void delete_previous_word(input_state& state)
     {
       const auto old_pos = state.pos;
       std::size_t diff;
@@ -931,7 +945,7 @@ FAILED:
     /**
      * Swaps current character with previous one.
      */
-    static void transpose_characters(linenoiseState& state)
+    static void transpose_characters(input_state& state)
     {
       if (state.pos > 0 && state.pos < state.len)
       {
@@ -950,7 +964,7 @@ FAILED:
     /**
      * Deletes the whole line.
      */
-    static void kill_line(linenoiseState& state)
+    static void kill_line(input_state& state)
     {
       state.buf[0] = '\0';
       state.pos = 0;
@@ -961,7 +975,7 @@ FAILED:
     /**
      * Deletes characters from current position to end of line.
      */
-    static void kill_end_of_line(linenoiseState& state)
+    static void kill_end_of_line(input_state& state)
     {
       state.buf[state.pos] = '\0';
       state.len = state.pos;
@@ -973,7 +987,7 @@ FAILED:
      * to handle slow terminals returning the two characters at different
      * times.
      */
-    static void handle_esc(linenoiseState& state)
+    static void handle_esc(input_state& state)
     {
       char seq[3];
 
@@ -1055,7 +1069,7 @@ FAILED:
                            int stdout_fd,
                            const std::string& prompt)
     {
-      linenoiseState state;
+      input_state state;
 
       // Populate the input state that we pass to functions implementing
       // specific editing functionalities.
