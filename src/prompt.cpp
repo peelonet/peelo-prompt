@@ -136,35 +136,12 @@ struct linenoiseState {
   std::size_t buflen;
   /** Prompt to display. */
   std::string prompt;
-  size_t plen;        /* Prompt length. */
   size_t pos;         /* Current cursor position. */
   size_t oldpos;      /* Previous refresh cursor position. */
   size_t len;         /* Current edited line length. */
   size_t cols;        /* Number of columns in terminal. */
   size_t maxrows;     /* Maximum num of rows used so far (multiline mode) */
   int history_index;  /* The history index we are currently editing. */
-};
-
-enum KEY_ACTION{
-	KEY_NULL = 0,	    /* NULL */
-	CTRL_A = 1,         /* Ctrl+a */
-	CTRL_B = 2,         /* Ctrl-b */
-	CTRL_C = 3,         /* Ctrl-c */
-	CTRL_D = 4,         /* Ctrl-d */
-	CTRL_E = 5,         /* Ctrl-e */
-	CTRL_F = 6,         /* Ctrl-f */
-	CTRL_H = 8,         /* Ctrl-h */
-	TAB = 9,            /* Tab */
-	CTRL_K = 11,        /* Ctrl+k */
-	CTRL_L = 12,        /* Ctrl+l */
-	ENTER = 13,         /* Enter */
-	CTRL_N = 14,        /* Ctrl-n */
-	CTRL_P = 16,        /* Ctrl-p */
-	CTRL_T = 20,        /* Ctrl-t */
-	CTRL_U = 21,        /* Ctrl+u */
-	CTRL_W = 23,        /* Ctrl+w */
-	ESC = 27,           /* Escape */
-	BACKSPACE =  127    /* Backspace */
 };
 
 static void refreshLine(linenoiseState&);
@@ -208,6 +185,28 @@ namespace peelo
     static bool atexit_registered = false;
 
     static void disable_raw_mode(int);
+
+    enum key
+    {
+      key_ctrl_a = 1,
+      key_ctrl_b = 2,
+      key_ctrl_c = 3,
+      key_ctrl_d = 4,
+      key_ctrl_e = 5,
+      key_ctrl_f = 6,
+      key_ctrl_h = 8,
+      key_tab = 9,
+      key_ctrl_k = 11,
+      key_ctrl_l = 12,
+      key_enter = 13,
+      key_ctrl_n = 14,
+      key_ctrl_p = 16,
+      key_ctrl_t = 20,
+      key_ctrl_u = 21,
+      key_ctrl_w = 23,
+      key_esc = 27,
+      key_backspace = 127
+    };
 
     bool is_multi_line()
     {
@@ -346,7 +345,7 @@ namespace peelo
       buffer[i] = '\0';
 
       // Parse it.
-      if (buffer[0] != ESC || buffer[1] != '['
+      if (buffer[0] != key_esc || buffer[1] != '['
           || std::sscanf(buffer + 2, "%d;%d", &rows, &cols) != 2)
       {
         return -1;
@@ -423,9 +422,9 @@ FAILED:
     {
       static std::optional<callback_type> callback;
 
-      // This is an helper function for linenoiseEdit() and is called when the
-      // user types the <tab> key in order to complete the string currently in
-      // the input.
+      // This is an helper function for edit() and is called when the user
+      // types the <tab> key in order to complete the string currently in the
+      // input.
       //
       // The state of the editing is encapsulated into the pointed input state
       // structure as described in the structure definition.
@@ -471,7 +470,7 @@ FAILED:
 
             switch (c)
             {
-              case 9: // Tab
+              case key_tab:
                 i = (i + 1) % (completions.size() + 1);
                 if (i == completions.size())
                 {
@@ -479,7 +478,7 @@ FAILED:
                 }
                 break;
 
-              case 27: // Escape
+              case key_esc:
                 // Re-show original buffer.
                 if (i < completions.size())
                 {
@@ -756,351 +755,486 @@ static void refreshLine(linenoiseState& state)
   }
 }
 
-/* Insert the character 'c' at cursor current position.
- *
- * On error writing to the terminal -1 is returned, otherwise 0. */
-int linenoiseEditInsert(struct linenoiseState *l, char c)
+namespace peelo
 {
-  if (l->len < l->buflen) {
-    if (l->len == l->pos) {
-      l->buf[l->pos] = c;
-      l->pos++;
-      l->len++;
-      l->buf[l->len] = '\0';
-      if ((!peelo::prompt::multi_line && l->plen+l->len < l->cols && !hintsCallback)) {
-        /* Avoid a full update of the line in the
-         * trivial case. */
-        if (write(l->ofd,&c,1) == -1) return -1;
-      } else {
-        refreshLine(*l);
-      }
-    } else {
-      memmove(l->buf+l->pos+1,l->buf+l->pos,l->len-l->pos);
-      l->buf[l->pos] = c;
-      l->len++;
-      l->pos++;
-      l->buf[l->len] = '\0';
-      refreshLine(*l);
-    }
-  }
-  return 0;
-}
-
-/* Move cursor on the left. */
-void linenoiseEditMoveLeft(struct linenoiseState *l) {
-    if (l->pos > 0) {
-        l->pos--;
-        refreshLine(*l);
-    }
-}
-
-/* Move cursor on the right. */
-void linenoiseEditMoveRight(struct linenoiseState *l) {
-    if (l->pos != l->len) {
-        l->pos++;
-        refreshLine(*l);
-    }
-}
-
-/* Move cursor to the start of the line. */
-void linenoiseEditMoveHome(struct linenoiseState *l) {
-    if (l->pos != 0) {
-        l->pos = 0;
-        refreshLine(*l);
-    }
-}
-
-/* Move cursor to the end of the line. */
-void linenoiseEditMoveEnd(struct linenoiseState *l) {
-    if (l->pos != l->len) {
-        l->pos = l->len;
-        refreshLine(*l);
-    }
-}
-
-/* Substitute the currently edited line with the next or previous history
- * entry as specified by 'dir'. */
-#define LINENOISE_HISTORY_NEXT 0
-#define LINENOISE_HISTORY_PREV 1
-void linenoiseEditHistoryNext(struct linenoiseState *l, int dir) {
-    if (history_len > 1) {
-        /* Update the current history entry before to
-         * overwrite it with the next one. */
-        free(history[history_len - 1 - l->history_index]);
-        history[history_len - 1 - l->history_index] = strdup(l->buf);
-        /* Show the new entry */
-        l->history_index += (dir == LINENOISE_HISTORY_PREV) ? 1 : -1;
-        if (l->history_index < 0) {
-            l->history_index = 0;
-            return;
-        } else if (l->history_index >= history_len) {
-            l->history_index = history_len-1;
-            return;
+  namespace prompt
+  {
+    /**
+     * Insert the character 'c' at cursor's current position. On error writing
+     * to the terminal, false is returned, otherwise true.
+     */
+    static bool insert(linenoiseState& state, char c)
+    {
+      if (state.len < state.buflen)
+      {
+        if (state.len == state.pos)
+        {
+          state.buf[state.pos] = c;
+          ++state.pos;
+          ++state.len;
+          state.buf[state.len] = '\0';
+          if (!peelo::prompt::multi_line
+              && state.prompt.length() + state.len < state.cols
+              && !hintsCallback)
+          {
+            // Avoid a full update of the line in the trivial case.
+            if (::write(state.ofd, &c, 1) == -1)
+            {
+              return false;
+            }
+          } else {
+            refreshLine(state);
+          }
+        } else {
+          std::memmove(
+            static_cast<void*>(state.buf + state.pos + 1),
+            static_cast<const void*>(state.buf + state.pos),
+            state.len - state.pos
+          );
+          state.buf[state.pos] = c;
+          ++state.len;
+          ++state.pos;
+          state.buf[state.len] = '\0';
+          refreshLine(state);
         }
-        strncpy(l->buf,history[history_len - 1 - l->history_index],l->buflen);
-        l->buf[l->buflen-1] = '\0';
-        l->len = l->pos = strlen(l->buf);
-        refreshLine(*l);
+      }
+
+      return true;
     }
-}
 
-/* Delete the character at the right of the cursor without altering the cursor
- * position. Basically this is what happens with the "Delete" keyboard key. */
-void linenoiseEditDelete(struct linenoiseState *l) {
-    if (l->len > 0 && l->pos < l->len) {
-        memmove(l->buf+l->pos,l->buf+l->pos+1,l->len-l->pos-1);
-        l->len--;
-        l->buf[l->len] = '\0';
-        refreshLine(*l);
-    }
-}
-
-/* Backspace implementation. */
-void linenoiseEditBackspace(struct linenoiseState *l) {
-    if (l->pos > 0 && l->len > 0) {
-        memmove(l->buf+l->pos-1,l->buf+l->pos,l->len-l->pos);
-        l->pos--;
-        l->len--;
-        l->buf[l->len] = '\0';
-        refreshLine(*l);
-    }
-}
-
-/* Delete the previosu word, maintaining the cursor at the start of the
- * current word. */
-void linenoiseEditDeletePrevWord(struct linenoiseState *l) {
-    size_t old_pos = l->pos;
-    size_t diff;
-
-    while (l->pos > 0 && l->buf[l->pos-1] == ' ')
-        l->pos--;
-    while (l->pos > 0 && l->buf[l->pos-1] != ' ')
-        l->pos--;
-    diff = old_pos - l->pos;
-    memmove(l->buf+l->pos,l->buf+old_pos,l->len-old_pos+1);
-    l->len -= diff;
-    refreshLine(*l);
-}
-
-/* This function is the core of the line editing capability of linenoise.
- * It expects 'fd' to be already in "raw mode" so that every key pressed
- * will be returned ASAP to read().
- *
- * The resulting string is put into 'buf' when the user type enter, or
- * when ctrl+d is typed.
- *
- * The function returns the length of the current buffer. */
-static std::optional<std::string> linenoiseEdit(int stdin_fd,
-                                                int stdout_fd,
-                                                const std::string& prompt)
-{
-  struct linenoiseState l;
-
-  /* Populate the linenoise state that we pass to functions implementing
-   * specific editing functionalities. */
-  l.ifd = stdin_fd;
-  l.ofd = stdout_fd;
-  l.buflen = LINENOISE_MAX_LINE;
-  l.prompt = prompt;
-  l.oldpos = l.pos = 0;
-  l.len = 0;
-  l.cols = peelo::prompt::get_columns(stdin_fd, stdout_fd);
-  l.maxrows = 0;
-  l.history_index = 0;
-
-  /* Buffer starts empty. */
-  l.buf[0] = '\0';
-  l.buflen--; /* Make sure there is always space for the nulterm */
-
-  /* The latest history entry is always our current buffer, that
-   * initially is just an empty string. */
-  linenoiseHistoryAdd("");
-
-  if (write(l.ofd, prompt.c_str(), prompt.length()) == -1)
-  {
-    return std::optional<std::string>();
-  }
-
-  for (;;)
-  {
-    char c;
-    const auto nread = read(l.ifd, &c, 1);
-    char seq[3];
-
-    if (nread <= 0)
+    /**
+     * Move cursor on the left.
+     */
+    static void move_left(linenoiseState& state)
     {
-      return std::optional<std::string>(std::string(l.buf, l.len));
+      if (state.pos > 0)
+      {
+        --state.pos;
+        refreshLine(state);
+      }
     }
 
-    /* Only autocomplete when the callback is set. It returns < 0 when
-     * there was an error reading from fd. Otherwise it will return the
-     * character that should be handled next. */
-    if (c == 9 && peelo::prompt::completion::callback)
+    /**
+     * Move cursor on the right.
+     */
+    static void move_right(linenoiseState& state)
     {
-      c = peelo::prompt::completion::complete_line(l);
-      /* Return on errors */
-      if (c < 0)
+      if (state.pos != state.len)
       {
-        return std::optional<std::string>(std::string(l.buf, l.len));
-      }
-      /* Read next character when 0 */
-      if (c == 0)
-      {
-        continue;
+        ++state.pos;
+        refreshLine(state);
       }
     }
 
-    switch(c) {
-    case ENTER:    /* enter */
-      history_len--;
-      free(history[history_len]);
-      if (peelo::prompt::multi_line)
+    /**
+     * Move cursor to the start of the line.
+     */
+    static void move_home(linenoiseState& state)
+    {
+      if (state.pos != 0)
       {
-        linenoiseEditMoveEnd(&l);
+        state.pos = 0;
+        refreshLine(state);
       }
-      if (hintsCallback) {
-          /* Force a refresh without hints to leave the previous
-           * line as the user typed it after a newline. */
-          linenoiseHintsCallback *hc = hintsCallback;
-          hintsCallback = NULL;
-          refreshLine(l);
-          hintsCallback = hc;
-      }
-      return std::optional<std::string>(std::string(l.buf, l.len));
-    case CTRL_C:     /* ctrl-c */
-      errno = EAGAIN;
-      return std::optional<std::string>();
-    case BACKSPACE:   /* backspace */
-    case 8:     /* ctrl-h */
-      linenoiseEditBackspace(&l);
-      break;
-    case CTRL_D:     /* ctrl-d, remove char at right of cursor, or if the
-                        line is empty, act as end-of-file. */
-      if (l.len > 0) {
-        linenoiseEditDelete(&l);
-      } else {
-        history_len--;
-        free(history[history_len]);
+    }
 
-        return std::optional<std::string>();
+    /**
+     * Move cursor to the end of the line.
+     */
+    static void move_end(linenoiseState& state)
+    {
+      if (state.pos != state.len)
+      {
+        state.pos = state.len;
+        refreshLine(state);
       }
-      break;
-    case CTRL_T:    /* ctrl-t, swaps current character with previous. */
-      if (l.pos > 0 && l.pos < l.len) {
-        int aux = l.buf[l.pos-1];
-        l.buf[l.pos-1] = l.buf[l.pos];
-        l.buf[l.pos] = aux;
-        if (l.pos != l.len-1) l.pos++;
-        refreshLine(l);
-      }
-      break;
-    case CTRL_B:     /* ctrl-b */
-      linenoiseEditMoveLeft(&l);
-      break;
-    case CTRL_F:     /* ctrl-f */
-      linenoiseEditMoveRight(&l);
-      break;
-    case CTRL_P:    /* ctrl-p */
-      linenoiseEditHistoryNext(&l, LINENOISE_HISTORY_PREV);
-      break;
-    case CTRL_N:    /* ctrl-n */
-      linenoiseEditHistoryNext(&l, LINENOISE_HISTORY_NEXT);
-      break;
-    case ESC:    /* escape sequence */
-      /* Read the next two bytes representing the escape sequence.
-       * Use two calls to handle slow terminals returning the two
-       * chars at different times. */
-      if (read(l.ifd,seq,1) == -1) break;
-      if (read(l.ifd,seq+1,1) == -1) break;
+    }
 
-      /* ESC [ sequences. */
+    /**
+     * Substitute the currently edited line with the next or previous history
+     * entry as specified by 'direction'.
+     */
+    static void edit_history_next(linenoiseState& state, bool direction)
+    {
+      if (history_len < 2)
+      {
+        return;
+      }
+      // Update the current history entry before overwriting it with the next
+      // one.
+      std::free(history[history_len - 1 - state.history_index]);
+      history[history_len - 1 - state.history_index] = ::strdup(state.buf);
+      // Show the next entry.
+      state.history_index += direction ? -1 : 1;
+      if (state.history_index < 0)
+      {
+        state.history_index = 0;
+        return;
+      }
+      else if (state.history_index >= history_len)
+      {
+        state.history_index = history_len - 1;
+        return;
+      }
+      std::strncpy(
+        state.buf,
+        history[history_len - 1 - state.history_index],
+        state.buflen
+      );
+      state.buf[state.buflen - 1] = '\0';
+      state.len = state.pos = std::strlen(state.buf);
+      refreshLine(state);
+    }
+
+    /**
+     * Delete the character at the right of the cursor without altering the
+     * cursor position. Basically this is what happens with the "Delete"
+     * keyboard key.
+     */
+    static void delete_next_char(linenoiseState& state)
+    {
+      if (state.len > 0 && state.pos < state.len)
+      {
+        std::memmove(
+          static_cast<void*>(state.buf + state.pos),
+          static_cast<const void*>(state.buf + state.pos + 1),
+          state.len - state.pos - 1
+        );
+        --state.len;
+        state.buf[state.len] = '\0';
+        refreshLine(state);
+      }
+    }
+
+    /**
+     * Backspace implementation.
+     */
+    static void delete_previous_char(linenoiseState& state)
+    {
+      if (state.pos > 0 && state.len > 0)
+      {
+        std::memmove(
+          static_cast<void*>(state.buf + state.pos - 1),
+          static_cast<const void*>(state.buf + state.pos),
+          state.len - state.pos
+        );
+        --state.pos;
+        --state.len;
+        state.buf[state.len] = '\0';
+        refreshLine(state);
+      }
+    }
+
+    /**
+     * Delete the previous word, maintaining the cursor at the start of the
+     * current word.
+     */
+    static void delete_previous_word(linenoiseState& state)
+    {
+      const auto old_pos = state.pos;
+      std::size_t diff;
+
+      while (state.pos > 0 && state.buf[state.pos - 1] == ' ')
+      {
+        --state.pos;
+      }
+      while (state.pos > 0 && state.buf[state.pos - 1] != ' ')
+      {
+        --state.pos;
+      }
+      diff = old_pos - state.pos;
+      std::memmove(
+        static_cast<void*>(state.buf + state.pos),
+        static_cast<const void*>(state.buf + old_pos),
+        state.len - old_pos + 1
+      );
+      state.len -= diff;
+      refreshLine(state);
+    }
+
+    /**
+     * Swaps current character with previous one.
+     */
+    static void transpose_characters(linenoiseState& state)
+    {
+      if (state.pos > 0 && state.pos < state.len)
+      {
+        const auto aux = state.buf[state.pos - 1];
+
+        state.buf[state.pos - 1] = state.buf[state.pos];
+        state.buf[state.pos] = aux;
+        if (state.pos != state.len - 1)
+        {
+          ++state.pos;
+        }
+        refreshLine(state);
+      }
+    }
+
+    /**
+     * Deletes the whole line.
+     */
+    static void kill_line(linenoiseState& state)
+    {
+      state.buf[0] = '\0';
+      state.pos = 0;
+      state.len = 0;
+      refreshLine(state);
+    }
+
+    /**
+     * Deletes characters from current position to end of line.
+     */
+    static void kill_end_of_line(linenoiseState& state)
+    {
+      state.buf[state.pos] = '\0';
+      state.len = state.pos;
+      refreshLine(state);
+    }
+
+    /**
+     * Read the next two bytes representing the escape sequence. Use two calls
+     * to handle slow terminals returning the two characters at different
+     * times.
+     */
+    static void handle_esc(linenoiseState& state)
+    {
+      char seq[3];
+
+      if (::read(state.ifd, seq, 1) == -1
+          || ::read(state.ifd, seq + 1, 1) == -1)
+      {
+        return;
+      }
+
+      // ESC [ sequences.
       if (seq[0] == '[')
       {
-        if (seq[1] >= '0' && seq[1] <= '9')
+        if (std::isdigit(seq[1]))
         {
-            /* Extended escape, read additional byte. */
-            if (read(l.ifd,seq+2,1) == -1) break;
-            if (seq[2] == '~')
-            {
-              switch(seq[1])
-              {
-              case '3': /* Delete key. */
-                linenoiseEditDelete(&l);
-                break;
-              }
-            }
-        } else {
-          switch(seq[1])
+          // Extended escape, read additional byte.
+          if (::read(state.ifd, seq + 2, 1) == -1)
           {
-          case 'A': /* Up */
-            linenoiseEditHistoryNext(&l, LINENOISE_HISTORY_PREV);
-            break;
-          case 'B': /* Down */
-            linenoiseEditHistoryNext(&l, LINENOISE_HISTORY_NEXT);
-            break;
-          case 'C': /* Right */
-            linenoiseEditMoveRight(&l);
-            break;
-          case 'D': /* Left */
-            linenoiseEditMoveLeft(&l);
-            break;
-          case 'H': /* Home */
-            linenoiseEditMoveHome(&l);
-            break;
-          case 'F': /* End*/
-            linenoiseEditMoveEnd(&l);
-            break;
+            return;
+          }
+          // Delete key.
+          else if (seq[2] == '~' && seq[1] == '3')
+          {
+            delete_next_char(state);
+          }
+        } else {
+          switch (seq[1])
+          {
+            case 'A': // Up
+              edit_history_next(state, false);
+              break;
+
+            case 'B': // Down
+              edit_history_next(state, true);
+              break;
+
+            case 'C': // Right
+              move_right(state);
+              break;
+
+            case 'D': // Left
+              move_left(state);
+              break;
+
+            case 'H': // Home
+              move_home(state);
+              break;
+
+            case 'F': // End
+              move_end(state);
+              break;
           }
         }
       }
-
-      /* ESC O sequences. */
+      // ESC O sequences.
       else if (seq[0] == 'O')
       {
-        switch(seq[1])
+        switch (seq[1])
         {
-        case 'H': /* Home */
-          linenoiseEditMoveHome(&l);
-          break;
-        case 'F': /* End*/
-          linenoiseEditMoveEnd(&l);
-          break;
+          case 'H': // Home
+            move_home(state);
+            break;
+
+          case 'F': // End
+            move_end(state);
+            break;
         }
       }
-      break;
-    default:
-      if (linenoiseEditInsert(&l,c))
+    }
+
+    /**
+     * This function is the core of the line editing capability of this
+     * library. It expects 'fd' to be already in "raw mode" so that every key
+     * pressed will be returned ASAP to read().
+     *
+     * The resulting string is returned by the function when the user types
+     * enter, or when ^D is typed.
+     */
+    static value_type edit(int stdin_fd,
+                           int stdout_fd,
+                           const std::string& prompt)
+    {
+      linenoiseState state;
+
+      // Populate the input state that we pass to functions implementing
+      // specific editing functionalities.
+      state.ifd = stdin_fd;
+      state.ofd = stdout_fd;
+      state.buflen = LINENOISE_MAX_LINE;
+      state.prompt = prompt;
+      state.oldpos = 0;
+      state.pos = 0;
+      state.len = 0;
+      state.cols = get_columns(stdin_fd, stdout_fd);
+      state.maxrows = 0;
+      state.history_index = 0;
+
+      // Buffer starts empty.
+      state.buf[0] = '\0';
+      // Make sure there is always space for the nulterm.
+      --state.buflen;
+
+      // Latest history entry is always our current buffer, that initially is
+      // just an empty string.
+      linenoiseHistoryAdd("");
+
+      if (::write(state.ofd, prompt.c_str(), prompt.length()) == -1)
       {
-        return std::optional<std::string>();
+        return value_type();
       }
-      break;
-    case CTRL_U: /* Ctrl+u, delete the whole line. */
-      l.buf[0] = '\0';
-      l.pos = l.len = 0;
-      refreshLine(l);
-      break;
-    case CTRL_K: /* Ctrl+k, delete from current to end of line. */
-      l.buf[l.pos] = '\0';
-      l.len = l.pos;
-      refreshLine(l);
-      break;
-    case CTRL_A: /* Ctrl+a, go to the start of the line */
-      linenoiseEditMoveHome(&l);
-      break;
-    case CTRL_E: /* ctrl+e, go to the end of the line */
-      linenoiseEditMoveEnd(&l);
-      break;
-    case CTRL_L: /* ctrl+l, clear screen */
-      peelo::prompt::clear_screen();
-      refreshLine(l);
-      break;
-    case CTRL_W: /* ctrl+w, delete previous word */
-      linenoiseEditDeletePrevWord(&l);
-      break;
+
+      for (;;)
+      {
+        char c;
+
+        if (::read(state.ifd, &c, 1) <= 0)
+        {
+          return value_type(std::string(state.buf, state.len));
+        }
+
+        // Only autocomplete when the callback is set. It returns < 0 when
+        // there was an error reading from the fd. Otherwise it will return the
+        // character that should be handled next.
+        if (c == key_tab && completion::callback)
+        {
+          // Return on errors.
+          if ((c = completion::complete_line(state)) < 0)
+          {
+            return value_type(std::string(state.buf, state.len));
+          }
+          // Read next character when 0.
+          else if (c == 0)
+          {
+            continue;
+          }
+        }
+
+        switch (c)
+        {
+          case key_enter:
+            std::free(history[--history_len]);
+            if (multi_line)
+            {
+              move_end(state);
+            }
+            if (hintsCallback)
+            {
+              // Force a refresh without hints to leave the previous line as
+              // the user typed it after a newline.
+              const auto callback = hintsCallback;
+
+              hintsCallback = nullptr;
+              refreshLine(state);
+              hintsCallback = callback;
+            }
+            return value_type(std::string(state.buf, state.len));
+
+          case key_ctrl_c:
+            errno = EAGAIN;
+            return value_type();
+
+          case key_backspace:
+          case key_ctrl_h:
+            delete_previous_char(state);
+            break;
+
+          case key_ctrl_d:
+            // Remove character at the right of the cursor, or if the line is
+            // empty, act as end-of-file.
+            if (state.len > 0)
+            {
+              delete_next_char(state);
+            } else {
+              std::free(history[--history_len]);
+
+              return value_type();
+            }
+            break;
+
+          case key_ctrl_t:
+            transpose_characters(state);
+            break;
+
+          case key_ctrl_b:
+            move_left(state);
+            break;
+
+          case key_ctrl_f:
+            move_right(state);
+            break;
+
+          case key_ctrl_p:
+            edit_history_next(state, false);
+            break;
+
+          case key_ctrl_n:
+            edit_history_next(state, true);
+            break;
+
+          case key_esc:
+            handle_esc(state);
+            break;
+
+          case key_ctrl_u:
+            kill_line(state);
+            break;
+
+          case key_ctrl_k:
+            kill_end_of_line(state);
+            break;
+
+          case key_ctrl_a:
+            move_home(state);
+            break;
+
+          case key_ctrl_e:
+            move_end(state);
+            break;
+
+          case key_ctrl_l:
+            clear_screen();
+            refreshLine(state);
+            break;
+
+          case key_ctrl_w:
+            delete_previous_word(state);
+            break;
+
+          default:
+            if (!insert(state, c))
+            {
+              return value_type();
+            }
+            break;
+        }
+      }
     }
   }
-
-  return std::optional<std::string>(std::string(l.buf, l.len));
 }
 
 /* This special mode is used by linenoise in order to print scan codes
@@ -1136,8 +1270,8 @@ namespace peelo
   namespace prompt
   {
     /**
-     * This function calls the line editing function linenoiseEdit() using the
-     * STDIN file descriptor set in raw mode.
+     * This function calls the line editing function edit() using the STDIN
+     * file descriptor set in raw mode.
      */
     static value_type input_raw(const std::string& prompt)
     {
@@ -1147,7 +1281,7 @@ namespace peelo
       {
         return value_type();
       }
-      result = linenoiseEdit(STDIN_FILENO, STDOUT_FILENO, prompt);
+      result = edit(STDIN_FILENO, STDOUT_FILENO, prompt);
       disable_raw_mode(STDIN_FILENO);
       std::printf("\n");
 
