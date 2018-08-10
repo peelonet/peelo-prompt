@@ -38,8 +38,10 @@
 #ifndef PEELO_PROMPT_HPP_GUARD
 #define PEELO_PROMPT_HPP_GUARD
 
+#include <functional>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace peelo
 {
@@ -48,21 +50,27 @@ namespace peelo
     using value_type = std::optional<std::string>;
 
     value_type input(const std::string& prompt);
+
+    namespace completion
+    {
+      using container_type = std::vector<std::string>;
+      using callback_type = std::function<void(
+        const std::string&,
+        container_type&
+      )>;
+
+      /**
+       * Registers a callback function to be called during tab-completion.
+       */
+      void set_callback(const std::optional<callback_type>& callback);
+    }
   }
 }
 
-typedef struct linenoiseCompletions {
-  std::size_t len;
-  char **cvec;
-} linenoiseCompletions;
-
-typedef void(linenoiseCompletionCallback)(const char *, linenoiseCompletions *);
 typedef char*(linenoiseHintsCallback)(const char *, int *color, int *bold);
 typedef void(linenoiseFreeHintsCallback)(void *);
-void linenoiseSetCompletionCallback(linenoiseCompletionCallback *);
 void linenoiseSetHintsCallback(linenoiseHintsCallback *);
 void linenoiseSetFreeHintsCallback(linenoiseFreeHintsCallback *);
-void linenoiseAddCompletion(linenoiseCompletions *, const char *);
 
 int linenoiseHistoryAdd(const char *line);
 int linenoiseHistorySetMaxLen(int len);

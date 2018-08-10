@@ -119,7 +119,6 @@
 #define LINENOISE_DEFAULT_HISTORY_MAX_LEN 100
 #define LINENOISE_MAX_LINE 4096
 static const char *unsupported_term[] = {"dumb","cons25","emacs",NULL};
-static linenoiseCompletionCallback *completionCallback = NULL;
 static linenoiseHintsCallback *hintsCallback = NULL;
 static linenoiseFreeHintsCallback *freeHintsCallback = NULL;
 
@@ -334,82 +333,107 @@ static void linenoiseBeep(void) {
 
 /* ============================== Completion ================================ */
 
-/* Free a list of completion option populated by linenoiseAddCompletion(). */
-static void freeCompletions(linenoiseCompletions *lc) {
-    size_t i;
-    for (i = 0; i < lc->len; i++)
-        free(lc->cvec[i]);
-    if (lc->cvec != NULL)
-        free(lc->cvec);
-}
+namespace peelo
+{
+  namespace prompt
+  {
+    namespace completion
+    {
+      static std::optional<callback_type> callback;
 
-/* This is an helper function for linenoiseEdit() and is called when the
- * user types the <tab> key in order to complete the string currently in the
- * input.
- *
- * The state of the editing is encapsulated into the pointed linenoiseState
- * structure as described in the structure definition. */
-static int completeLine(struct linenoiseState *ls) {
-    linenoiseCompletions lc = { 0, NULL };
-    int nread, nwritten;
-    char c = 0;
+      // This is an helper function for linenoiseEdit() and is called when the
+      // user types the <tab> key in order to complete the string currently in
+      // the input.
+      //
+      // The state of the editing is encapsulated into the pointed input state
+      // structure as described in the structure definition.
+      static int complete_line(struct linenoiseState& state)
+      {
+        container_type completions;
+        int c;
 
-    completionCallback(ls->buf,&lc);
-    if (lc.len == 0) {
-        linenoiseBeep();
-    } else {
-        size_t stop = 0, i = 0;
-
-        while(!stop) {
-            /* Show completion or original buffer */
-            if (i < lc.len) {
-                struct linenoiseState saved = *ls;
-
-                ls->len = ls->pos = strlen(lc.cvec[i]);
-                std::strncpy(ls->buf, lc.cvec[i], ls->buflen);
-                refreshLine(ls);
-                ls->len = saved.len;
-                ls->pos = saved.pos;
-                std::strncpy(ls->buf, saved.buf, ls->buflen);
-            } else {
-                refreshLine(ls);
-            }
-
-            nread = read(ls->ifd,&c,1);
-            if (nread <= 0) {
-                freeCompletions(&lc);
-                return -1;
-            }
-
-            switch(c) {
-                case 9: /* tab */
-                    i = (i+1) % (lc.len+1);
-                    if (i == lc.len) linenoiseBeep();
-                    break;
-                case 27: /* escape */
-                    /* Re-show original buffer */
-                    if (i < lc.len) refreshLine(ls);
-                    stop = 1;
-                    break;
-                default:
-                    /* Update buffer and return */
-                    if (i < lc.len) {
-                        nwritten = snprintf(ls->buf,ls->buflen,"%s",lc.cvec[i]);
-                        ls->len = ls->pos = nwritten;
-                    }
-                    stop = 1;
-                    break;
-            }
+        if (callback)
+        {
+          (*callback)(std::string(state.buf, state.len), completions);
         }
+
+        if (completions.empty())
+        {
+          linenoiseBeep();
+        } else {
+          bool stop = false;
+          container_type::size_type i = 0;
+
+          while (!stop)
+          {
+            // Show completion or original buffer.
+            if (i < completions.size())
+            {
+              const auto& completion = completions[i];
+              linenoiseState saved = state;
+
+              state.len = state.pos = completion.length();
+              std::strncpy(state.buf, completion.c_str(), state.buflen);
+              refreshLine(&state);
+              state.len = saved.len;
+              state.pos = saved.pos;
+              std::strncpy(state.buf, saved.buf, state.buflen);
+            } else {
+              refreshLine(&state);
+            }
+
+            if (::read(state.ifd, &c, 1) <= 0)
+            {
+              return -1;
+            }
+
+            switch (c)
+            {
+              case 9: // Tab
+                i = (i + 1) % (completions.size() + 1);
+                if (i == completions.size())
+                {
+                  linenoiseBeep();
+                }
+                break;
+
+              case 27: // Escape
+                // Re-show original buffer.
+                if (i < completions.size())
+                {
+                  refreshLine(&state);
+                }
+                stop = true;
+                break;
+
+              default:
+                // Update buffer and return.
+                if (i < completions.size())
+                {
+                  const auto written = std::snprintf(
+                    state.buf,
+                    state.buflen,
+                    "%s",
+                    completions[i].c_str()
+                  );
+
+                  state.len = state.pos = written;
+                }
+                stop = true;
+                break;
+            }
+          }
+        }
+
+        return c;
+      }
+
+      void set_callback(const std::optional<callback_type>& cb)
+      {
+        callback = cb;
+      }
     }
-
-    freeCompletions(&lc);
-    return c; /* Return last read character */
-}
-
-/* Register a callback function to be called for tab-completion. */
-void linenoiseSetCompletionCallback(linenoiseCompletionCallback *fn) {
-    completionCallback = fn;
+  }
 }
 
 /* Register a hits function to be called to show hits to the user at the
@@ -422,26 +446,6 @@ void linenoiseSetHintsCallback(linenoiseHintsCallback *fn) {
  * registered with linenoiseSetHintsCallback(). */
 void linenoiseSetFreeHintsCallback(linenoiseFreeHintsCallback *fn) {
     freeHintsCallback = fn;
-}
-
-/* This function is used by the callback function registered by the user
- * in order to add completion options given the input string when the
- * user typed <tab>. See the example.c source code for a very easy to
- * understand example. */
-void linenoiseAddCompletion(linenoiseCompletions *lc, const char *str) {
-    size_t len = strlen(str);
-    char *copy, **cvec;
-
-    copy = static_cast<char*>(malloc(len+1));
-    if (copy == NULL) return;
-    memcpy(copy,str,len+1);
-    cvec = static_cast<char**>(realloc(lc->cvec,sizeof(char*)*(lc->len+1)));
-    if (cvec == NULL) {
-        free(copy);
-        return;
-    }
-    lc->cvec = cvec;
-    lc->cvec[lc->len++] = copy;
 }
 
 /* =========================== Line editing ================================= */
@@ -814,9 +818,9 @@ static std::optional<std::string> linenoiseEdit(int stdin_fd,
     /* Only autocomplete when the callback is set. It returns < 0 when
      * there was an error reading from fd. Otherwise it will return the
      * character that should be handled next. */
-    if (c == 9 && completionCallback != NULL)
+    if (c == 9 && peelo::prompt::completion::callback)
     {
-      c = completeLine(&l);
+      c = peelo::prompt::completion::complete_line(l);
       /* Return on errors */
       if (c < 0)
       {

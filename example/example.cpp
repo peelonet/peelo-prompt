@@ -4,16 +4,6 @@
 
 #include <peelo/prompt.hpp>
 
-
-void completion(const char* buf, linenoiseCompletions* lc)
-{
-  if (buf[0] == 'h')
-  {
-    linenoiseAddCompletion(lc, "hello");
-    linenoiseAddCompletion(lc, "hello there");
-  }
-}
-
 char* hints(const char* buf, int* color, int* bold)
 {
   if (!strcasecmp(buf, "hello"))
@@ -56,7 +46,17 @@ int main(int argc, char** argv)
 
   // Set the completion callback. This will be called every time the
   // user uses the <tab> key.
-  linenoiseSetCompletionCallback(completion);
+  peelo::prompt::completion::set_callback(
+    [] (const std::string& buf, peelo::prompt::completion::container_type& c)
+    {
+      if (!buf.empty() && buf[0] == 'h')
+      {
+        c.push_back("hello");
+        c.push_back("hello there");
+      }
+    }
+  );
+
   linenoiseSetHintsCallback(hints);
 
   // Load history from file. The history file is just a plain text file
