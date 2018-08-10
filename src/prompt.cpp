@@ -561,28 +561,57 @@ static void abFree(struct abuf *ab) {
 
 /* Helper of refreshSingleLine() and refreshMultiLine() to show hints
  * to the right of the prompt. */
-void refreshShowHints(struct abuf *ab, struct linenoiseState *l, int plen) {
-    char seq[64];
-    if (hintsCallback && plen+l->len < l->cols) {
-        int color = -1, bold = 0;
-        char *hint = hintsCallback(l->buf,&color,&bold);
-        if (hint) {
-            int hintlen = strlen(hint);
-            int hintmaxlen = l->cols-(plen+l->len);
-            if (hintlen > hintmaxlen) hintlen = hintmaxlen;
-            if (bold == 1 && color == -1) color = 37;
-            if (color != -1 || bold != 0)
-                snprintf(seq,64,"\033[%d;%d;49m",bold,color);
-            else
-                seq[0] = '\0';
-            abAppend(ab,seq,strlen(seq));
-            abAppend(ab,hint,hintlen);
-            if (color != -1 || bold != 0)
-                abAppend(ab,"\033[0m",4);
-            /* Call the function to free the hint returned. */
-            if (freeHintsCallback) freeHintsCallback(hint);
-        }
+static void refreshShowHints(struct abuf* ab,
+                             linenoiseState& l,
+                             std::size_t plen)
+{
+  char seq[64];
+  peelo::prompt::color color = peelo::prompt::color::none;
+  bool bold = false;
+  char* hint;
+
+  if (!hintsCallback || plen + l.len >= l.cols)
+  {
+    return;
+  }
+  if ((hint = hintsCallback(l.buf, color, bold)))
+  {
+    auto hintlen = std::strlen(hint);
+    auto hintmaxlen = l.cols - (plen + l.len);
+
+    if (hintlen > hintmaxlen)
+    {
+      hintlen = hintmaxlen;
     }
+    if (bold && color == peelo::prompt::color::none)
+    {
+      color = peelo::prompt::color::white;
+    }
+    if (color != peelo::prompt::color::none || bold)
+    {
+      std::snprintf(
+        seq,
+        64,
+        "\033[%d;%d;49m",
+        bold ? 1 : 0,
+        static_cast<int>(color)
+      );
+    } else {
+      seq[0] = '\0';
+    }
+    abAppend(ab,seq,strlen(seq));
+    abAppend(ab,hint,hintlen);
+    if (color != peelo::prompt::color::none || bold)
+    {
+      abAppend(ab, "\033[0m", 4);
+    }
+
+    // Call the function to free the hint returned.
+    if (freeHintsCallback)
+    {
+      freeHintsCallback(hint);
+    }
+  }
 }
 
 /* Single line low level line refresh.
@@ -615,7 +644,7 @@ static void refreshSingleLine(struct linenoiseState *l) {
     abAppend(&ab, l->prompt.c_str(), l->prompt.length());
     abAppend(&ab,buf,len);
     /* Show hits if any. */
-    refreshShowHints(&ab,l,plen);
+    refreshShowHints(&ab, *l, plen);
     /* Erase to right */
     snprintf(seq,64,"\x1b[0K");
     abAppend(&ab,seq,strlen(seq));
@@ -670,7 +699,7 @@ static void refreshMultiLine(struct linenoiseState *l) {
     abAppend(&ab,l->buf,l->len);
 
     /* Show hits if any. */
-    refreshShowHints(&ab,l,plen);
+    refreshShowHints(&ab, *l, plen);
 
     /* If we are at the very end of the screen with our prompt, we need to
      * emit a newline and move the prompt to the first column. */

@@ -67,6 +67,22 @@ namespace peelo
      */
     void set_multi_line(bool flag);
 
+    /**
+     * Enumeration of different colors supported by hints.
+     */
+    enum class color
+    {
+      none = -1,
+      black = 30,
+      red = 31,
+      green = 32,
+      yellow = 33,
+      blue = 34,
+      magenta = 35,
+      cyan = 36,
+      white = 37
+    };
+
     namespace completion
     {
       using container_type = std::vector<std::string>;
@@ -83,7 +99,11 @@ namespace peelo
   }
 }
 
-typedef char*(linenoiseHintsCallback)(const char *, int *color, int *bold);
+typedef char*(linenoiseHintsCallback)(
+  const char* buffer,
+  peelo::prompt::color& color,
+  bool& bold
+);
 typedef void(linenoiseFreeHintsCallback)(void *);
 void linenoiseSetHintsCallback(linenoiseHintsCallback *);
 void linenoiseSetFreeHintsCallback(linenoiseFreeHintsCallback *);

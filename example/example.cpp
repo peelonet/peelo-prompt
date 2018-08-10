@@ -4,12 +4,12 @@
 
 #include <peelo/prompt.hpp>
 
-char* hints(const char* buf, int* color, int* bold)
+char* hints(const char* buf, peelo::prompt::color& color, bool& bold)
 {
   if (!strcasecmp(buf, "hello"))
   {
-    *color = 35;
-    *bold = 0;
+    color = peelo::prompt::color::magenta;
+    bold = false;
 
     return strdup(" World");
   }
