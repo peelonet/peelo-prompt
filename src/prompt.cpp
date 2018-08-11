@@ -108,41 +108,14 @@
 #include <cerrno>
 #include <cstring>
 #include <cctype>
+#include <deque>
 
 #include <termios.h>
 #include <unistd.h>
-#include <sys/stat.h>
-#include <sys/types.h>
 #include <sys/ioctl.h>
 
 #define LINENOISE_DEFAULT_HISTORY_MAX_LEN 100
 #define LINENOISE_MAX_LINE 4096
-static int history_max_len = LINENOISE_DEFAULT_HISTORY_MAX_LEN;
-static int history_len = 0;
-static char **history = NULL;
-
-static void freeHistory();
-
-/* Debugging macro. */
-#if 0
-FILE *lndebug_fp = NULL;
-#define lndebug(...) \
-    do { \
-        if (lndebug_fp == NULL) { \
-            lndebug_fp = fopen("/tmp/lndebug.txt","a"); \
-            fprintf(lndebug_fp, \
-            "[%d %d %d] p: %d, rows: %d, rpos: %d, max: %d, oldmax: %d\n", \
-            (int)l->len,(int)l->pos,(int)l->oldpos,plen,rows,rpos, \
-            (int)l->maxrows,old_rows); \
-        } \
-        fprintf(lndebug_fp, ", " __VA_ARGS__); \
-        fflush(lndebug_fp); \
-    } while (0)
-#else
-#define lndebug(fmt, ...)
-#endif
-
-/* ======================= Low level terminal handling ====================== */
 
 namespace peelo
 {
@@ -259,7 +232,6 @@ namespace peelo
     static void atexit_callback()
     {
       disable_raw_mode(STDIN_FILENO);
-      freeHistory();
     }
 
     /**
@@ -428,6 +400,54 @@ FAILED:
     {
       std::fprintf(stderr, "\x7");
       std::fflush(stderr);
+    }
+
+    namespace history
+    {
+      static size_type max_size = LINENOISE_DEFAULT_HISTORY_MAX_LEN;
+      static std::deque<std::string> container;
+
+      bool add(const std::string& line)
+      {
+        if (max_size == 0)
+        {
+          return false;
+        }
+
+        // Don't add duplicated lines.
+        if (!container.empty() && !container.back().compare(line))
+        {
+          return false;
+        }
+
+        if (container.size() == max_size)
+        {
+          container.pop_front();
+        }
+
+        container.push_back(line);
+
+        return true;
+      }
+
+      size_type get_max_size()
+      {
+        return max_size;
+      }
+
+      void set_max_size(size_type size)
+      {
+        if (size == 0)
+        {
+          container.clear();
+        } else {
+          while (container.size() > size)
+          {
+            container.pop_front();
+          }
+        }
+        max_size = size;
+      }
     }
 
     namespace completion
@@ -669,7 +689,6 @@ FAILED:
       // to the last row.
       if (old_rows - rpos > 0)
       {
-        lndebug("go down %d", old_rows - rpos);
         std::snprintf(seq, 64, "\x1b[%dB", old_rows - rpos);
         buffer.append(seq, std::strlen(seq));
       }
@@ -677,12 +696,10 @@ FAILED:
       // Now for every row clear it, go up.
       for (int j = 0; j < old_rows - 1; ++j)
       {
-        lndebug("clear+up");
         buffer.append("\r\x1b[0K\x1b[1A");
       }
 
       // Clean the top line.
-      lndebug("clear");
       buffer.append("\r\x1b[0K");
 
       // Write the prompt and the current buffer content.
@@ -698,7 +715,6 @@ FAILED:
           state.pos == state.len &&
           (state.pos + plen) % state.cols == 0)
       {
-        lndebug("<newline>");
         buffer.append("\n\r");
         if (++rows > static_cast<int>(state.maxrows))
         {
@@ -708,19 +724,16 @@ FAILED:
 
       // Move cursor to right position.
       rpos2 = ( plen + state.pos + state.cols) / state.cols;
-      lndebug("rpos2 %d", rpos2);
 
       // Go up till we reach the expected positon.
       if (rows-rpos2 > 0)
       {
-        lndebug("go-up %d", rows-rpos2);
         std::snprintf(seq, 64, "\x1b[%dA", rows - rpos2);
         buffer.append(seq, std::strlen(seq));
       }
 
       // Set column.
       col = (plen + static_cast<int>(state.pos)) % static_cast<int>(state.cols);
-      lndebug("set col %d", 1+col);
       if (col)
       {
         std::snprintf(seq, 64, "\r\x1b[%dC", col);
@@ -729,7 +742,6 @@ FAILED:
       }
       buffer.append(seq, std::strlen(seq));
 
-      lndebug("\n");
       state.oldpos = state.pos;
 
       ::write(fd, buffer.c_str(), buffer.length());
@@ -846,14 +858,15 @@ FAILED:
      */
     static void edit_history_next(input_state& state, bool direction)
     {
-      if (history_len < 2)
+      const auto size = history::container.size();
+
+      if (size < 2)
       {
         return;
       }
       // Update the current history entry before overwriting it with the next
       // one.
-      std::free(history[history_len - 1 - state.history_index]);
-      history[history_len - 1 - state.history_index] = ::strdup(state.buf);
+      history::container.back() = std::string(state.buf, state.len);
       // Show the next entry.
       state.history_index += direction ? -1 : 1;
       if (state.history_index < 0)
@@ -861,16 +874,15 @@ FAILED:
         state.history_index = 0;
         return;
       }
-      else if (state.history_index >= history_len)
+      else if (state.history_index >= static_cast<int>(size))
       {
-        state.history_index = history_len - 1;
+        state.history_index = size - 1;
         return;
       }
-      std::strncpy(
-        state.buf,
-        history[history_len - 1 - state.history_index],
-        state.buflen
-      );
+
+      const auto& entry = history::container[size - 1 - state.history_index];
+
+      std::strncpy(state.buf, entry.c_str(), state.buflen);
       state.buf[state.buflen - 1] = '\0';
       state.len = state.pos = std::strlen(state.buf);
       refresh(state);
@@ -1091,7 +1103,7 @@ FAILED:
 
       // Latest history entry is always our current buffer, that initially is
       // just an empty string.
-      linenoiseHistoryAdd("");
+      history::container.push_back(std::string());
 
       if (::write(state.ofd, prompt.c_str(), prompt.length()) == -1)
       {
@@ -1127,7 +1139,10 @@ FAILED:
         switch (c)
         {
           case key_enter:
-            std::free(history[--history_len]);
+            if (!history::container.empty())
+            {
+              history::container.pop_back();
+            }
             if (multi_line)
             {
               move_end(state);
@@ -1160,7 +1175,10 @@ FAILED:
             {
               delete_next_char(state);
             } else {
-              std::free(history[--history_len]);
+              if (!history::container.empty())
+              {
+                history::container.pop_back();
+              }
 
               return value_type();
             }
@@ -1309,126 +1327,4 @@ FAILED:
       return input_raw(prompt);
     }
   }
-}
-
-/* ================================ History ================================= */
-
-/* Free the history, but does not reset it. Only used when we have to
- * exit() to avoid memory leaks are reported by valgrind & co. */
-static void freeHistory(void) {
-    if (history) {
-        int j;
-
-        for (j = 0; j < history_len; j++)
-            free(history[j]);
-        free(history);
-    }
-}
-
-/* This is the API call to add a new entry in the linenoise history.
- * It uses a fixed array of char pointers that are shifted (memmoved)
- * when the history max length is reached in order to remove the older
- * entry and make room for the new one, so it is not exactly suitable for huge
- * histories, but will work well for a few hundred of entries.
- *
- * Using a circular buffer is smarter, but a bit more complex to handle. */
-int linenoiseHistoryAdd(const char *line) {
-    char *linecopy;
-
-    if (history_max_len == 0) return 0;
-
-    /* Initialization on first call. */
-    if (history == NULL) {
-        history = static_cast<char**>(malloc(sizeof(char*)*history_max_len));
-        if (history == NULL) return 0;
-        memset(history,0,(sizeof(char*)*history_max_len));
-    }
-
-    /* Don't add duplicated lines. */
-    if (history_len && !strcmp(history[history_len-1], line)) return 0;
-
-    /* Add an heap allocated copy of the line in the history.
-     * If we reached the max length, remove the older line. */
-    linecopy = strdup(line);
-    if (!linecopy) return 0;
-    if (history_len == history_max_len) {
-        free(history[0]);
-        memmove(history,history+1,sizeof(char*)*(history_max_len-1));
-        history_len--;
-    }
-    history[history_len] = linecopy;
-    history_len++;
-    return 1;
-}
-
-/* Set the maximum length for the history. This function can be called even
- * if there is already some history, the function will make sure to retain
- * just the latest 'len' elements if the new history length value is smaller
- * than the amount of items already inside the history. */
-int linenoiseHistorySetMaxLen(int len) {
-    char **neww;
-
-    if (len < 1) return 0;
-    if (history) {
-        int tocopy = history_len;
-
-        neww = static_cast<char**>(malloc(sizeof(char*)*len));
-        if (neww == NULL) return 0;
-
-        /* If we can't copy everything, free the elements we'll not use. */
-        if (len < tocopy) {
-            int j;
-
-            for (j = 0; j < tocopy-len; j++) free(history[j]);
-            tocopy = len;
-        }
-        memset(neww,0,sizeof(char*)*len);
-        memcpy(neww,history+(history_len-tocopy), sizeof(char*)*tocopy);
-        free(history);
-        history = neww;
-    }
-    history_max_len = len;
-    if (history_len > history_max_len)
-        history_len = history_max_len;
-    return 1;
-}
-
-/* Save the history in the specified file. On success 0 is returned
- * otherwise -1 is returned. */
-int linenoiseHistorySave(const char *filename) {
-    mode_t old_umask = umask(S_IXUSR|S_IRWXG|S_IRWXO);
-    FILE *fp;
-    int j;
-
-    fp = fopen(filename,"w");
-    umask(old_umask);
-    if (fp == NULL) return -1;
-    chmod(filename,S_IRUSR|S_IWUSR);
-    for (j = 0; j < history_len; j++)
-        fprintf(fp,"%s\n",history[j]);
-    fclose(fp);
-    return 0;
-}
-
-/* Load the history from the specified file. If the file does not exist
- * zero is returned and no operation is performed.
- *
- * If the file exists and the operation succeeded 0 is returned, otherwise
- * on error -1 is returned. */
-int linenoiseHistoryLoad(const char *filename) {
-    FILE *fp = fopen(filename,"r");
-    char buf[LINENOISE_MAX_LINE];
-
-    if (fp == NULL) return -1;
-
-    while (fgets(buf,LINENOISE_MAX_LINE,fp) != NULL) {
-        char *p;
-
-        p = strchr(buf,'\r');
-        if (!p) p = strchr(buf,'\n');
-        if (p) *p = '\0';
-        linenoiseHistoryAdd(buf);
-    }
-    fclose(fp);
-    return 0;
 }

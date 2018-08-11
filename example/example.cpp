@@ -58,10 +58,6 @@ int main(int argc, char** argv)
     }
   );
 
-  // Load history from file. The history file is just a plain text file
-  // where entries are separated by newlines.
-  linenoiseHistoryLoad("history.txt"); // Load the history at startup
-
   // Now this is the main loop of the typical linenoise-based application.
   // The call to linenoise() will block as long as the user types something
   // and presses enter.
@@ -82,15 +78,13 @@ int main(int argc, char** argv)
     if (value[0] != '/')
     {
       std::cout << "echo: '" << value << "'" << std::endl;
-      linenoiseHistoryAdd(value.c_str()); // Add to the history.
-      linenoiseHistorySave("history.txt"); // Save the history on disk.
+      // Add line to history.
+      peelo::prompt::history::add(value);
     }
+    // The "/historylen" command will change the history len.
     else if (!value.compare(0, 11, "/historylen"))
     {
-      // The "/historylen" command will change the history len.
-      auto length = std::atoi(value.c_str() + 11);
-
-      linenoiseHistorySetMaxLen(length);
+      peelo::prompt::history::set_max_size(std::atoi(value.c_str() + 11));
     }
     else if (value[0] == '/')
     {

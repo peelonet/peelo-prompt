@@ -83,6 +83,26 @@ namespace peelo
       white = 37
     };
 
+    namespace history
+    {
+      using size_type = std::size_t;
+
+      /**
+       * Adds new entry in the history.
+       */
+      bool add(const std::string& line);
+
+      /**
+       * Returns the maximum size of the history.
+       */
+      size_type get_max_size();
+
+      /**
+       * Sets the maximum size of the history.
+       */
+      void set_max_size(size_type size);
+    }
+
     namespace completion
     {
       using container_type = std::vector<std::string>;
@@ -114,10 +134,5 @@ namespace peelo
     }
   }
 }
-
-int linenoiseHistoryAdd(const char *line);
-int linenoiseHistorySetMaxLen(int len);
-int linenoiseHistorySave(const char *filename);
-int linenoiseHistoryLoad(const char *filename);
 
 #endif /* !PEELO_PROMPT_HPP_GUARD */
