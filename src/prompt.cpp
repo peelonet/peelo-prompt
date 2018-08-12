@@ -946,10 +946,22 @@ FAILED:
           {
             return;
           }
-          // Delete key.
-          else if (seq[2] == '~' && seq[1] == '3')
+          else if (seq[2] == '~')
           {
-            delete_next_char(state);
+            switch (seq[1])
+            {
+              case '3': // Delete key
+                delete_next_char(state);
+                break;
+
+              case '1': // Home (PuTTY)
+                move_home(state);
+                break;
+
+              case '4': // End (PuTTY)
+                move_end(state);
+                break;
+            }
           }
         } else {
           switch (seq[1])
