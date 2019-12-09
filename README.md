@@ -1,4 +1,4 @@
-# peelocpp-prompt
+# peelo-prompt
 
 [![travis][travis-image]][travis-url]
 
@@ -17,7 +17,7 @@ C++17 fork of the [linenoise] readline replacement library.
 
 # The API
 
-Just like the original library, `peelocpp-prompt` attempts to be very easy to
+Just like the original library, `peelo-prompt` attempts to be very easy to
 use, and reading the example shipped with the library should get you up to
 speed ASAP. Here is a list of functions provided by the library and how to use
 them.
@@ -38,7 +38,7 @@ standard input is not a tty, which happens every time you redirect a file
 to a program, or use it in an Unix pipeline, there are no limits to the
 length of the line that can be returned.
 
-The canonical loop used by a program using `peelocpp-prompt` will be something
+The canonical loop used by a program using `peelo-prompt` will be something
 like this:
 
 ```cpp
@@ -50,7 +50,7 @@ while (auto line = peelo::prompt::input("hello> "))
 
 ## Single line VS multi line editing
 
-By default, `peelocpp-prompt` uses single line editing, that is, a single row
+By default, `peelo-prompt` uses single line editing, that is, a single row
 on the screen will be used, and as the user types more, the text will scroll
 towards left to make room. This works if your program is one where the user is
 unlikely to write a lot of text, otherwise multi line editing, where multiple
@@ -66,7 +66,7 @@ You can disable it using `false` as argument.
 
 ## History
 
-`peelocpp-prompt` supports history, so that the user does not have to retyp
+`peelo-prompt` supports history, so that the user does not have to retyp
 again and again the same things, but can use the down and up arrows in order to
 search and re-edit already inserted lines of text.
 
@@ -86,7 +86,7 @@ function. Setting history size to `0` will disable history completely.
 
 ## Completion
 
-`peelocpp-prompt` supports completion, which is the ability to complete the
+`peelo-prompt` supports completion, which is the ability to complete the
 user input when she or he presses the `<TAB>` key.
 
 In order to use completion, you need to register a completion callback, which
@@ -126,8 +126,8 @@ If you want to test the completion feature, compile the example program with
 
 ## Hints
 
-`peelocpp-prompt` has a feature called *hints* which is very useful when you
-use `peelocpp-prompt` in order to implement a REPL (Read Eval Print Loop) for
+`peelo-prompt` has a feature called *hints* which is very useful when you
+use `peelo-prompt` in order to implement a REPL (Read Eval Print Loop) for
 a program that accepts commands and arguments, but may also be useful in other
 conditions.
 
@@ -196,5 +196,5 @@ user typed. You can do this by calling the following function:
 peelo::prompt::clear_screen();
 ```
 
-[travis-image]: https://travis-ci.com/peelonet/peelocpp-prompt.svg?branch=master
-[travis-url]: https://travis-ci.com/peelonet/peelocpp-prompt
+[travis-image]: https://travis-ci.com/peelonet/peelo-prompt.svg?branch=master
+[travis-url]: https://travis-ci.com/peelonet/peelo-prompt
