@@ -1,0 +1,11 @@
+language: cpp
+os: linux
+dist: bionic
+compiler:
+  - clang
+  - gcc
+env:
+  - CXXFLAGS="-Wall -Werror"
+script:
+  - cmake -DCMAKE_BUILD_TYPE=Debug .
+  - cmake --build . -- VERBOSE=1
