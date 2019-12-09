@@ -390,7 +390,7 @@ FAILED:
       static int complete_line(input_state& state)
       {
         container_type completions;
-        int c;
+        int c = -1;
 
         if (callback)
         {
