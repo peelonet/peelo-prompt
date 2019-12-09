@@ -1,5 +1,7 @@
 # peelocpp-prompt
 
+[![travis][travis-image]][travis-url]
+
 C++17 fork of the [linenoise] readline replacement library.
 
 [linenoise]: https://github.com/antirez/linenoise
@@ -193,3 +195,6 @@ user typed. You can do this by calling the following function:
 ```cpp
 peelo::prompt::clear_screen();
 ```
+
+[travis-image]: https://travis-ci.com/peelonet/peelocpp-prompt.svg?branch=master
+[travis-url]: https://travis-ci.com/peelonet/peelocpp-prompt
