@@ -7,6 +7,7 @@
 int main(int argc, char** argv)
 {
   const auto prgname = argv[0];
+  peelo::prompt prompt;
 
   // Parse options, with --multiline we enable multi line editing.
   while(argc > 1)
@@ -15,7 +16,7 @@ int main(int argc, char** argv)
     argv++;
     if (!std::strcmp(*argv, "--multiline"))
     {
-      peelo::prompt::set_multi_line(true);
+      prompt.set_multi_line(true);
       std::cout << "Multi-line mode enabled." << std::endl;
     } else {
       std::cerr << "Usage: "
@@ -28,8 +29,8 @@ int main(int argc, char** argv)
 
   // Set the completion callback. This will be called every time the
   // user uses the <tab> key.
-  peelo::prompt::completion::set_callback(
-    [] (const std::string& buf, peelo::prompt::completion::container_type& c)
+  prompt.set_completion_callback(
+    [] (const std::string& buf, peelo::prompt::completion_container_type& c)
     {
       if (!buf.empty() && buf[0] == 'h')
       {
@@ -39,12 +40,12 @@ int main(int argc, char** argv)
     }
   );
 
-  peelo::prompt::hints::set_callback(
+  prompt.set_hints_callback(
     [] (
       const std::string& buf,
       peelo::prompt::color& color,
       bool& bold
-    ) -> peelo::prompt::hints::value_type
+    ) -> peelo::prompt::value_type
     {
       if (!strcasecmp(buf.c_str(), "hello"))
       {
@@ -54,7 +55,7 @@ int main(int argc, char** argv)
         return " World";
       }
 
-      return peelo::prompt::hints::value_type();
+      return peelo::prompt::value_type();
     }
   );
 
@@ -64,7 +65,7 @@ int main(int argc, char** argv)
   //
   // The typed string is returned as a malloc() allocated string by
   // linenoise, so the user needs to free() it.
-  while (auto line = peelo::prompt::input("hello> "))
+  while (auto line = prompt.input("hello> "))
   {
     const auto value = line.value();
 
@@ -79,12 +80,12 @@ int main(int argc, char** argv)
     {
       std::cout << "echo: '" << value << "'" << std::endl;
       // Add line to history.
-      peelo::prompt::history::add(value);
+      prompt.add_to_history(value);
     }
     // The "/historylen" command will change the history len.
     else if (!value.compare(0, 11, "/historylen"))
     {
-      peelo::prompt::history::set_max_size(std::atoi(value.c_str() + 11));
+      prompt.set_history_max_size(std::atoi(value.c_str() + 11));
     }
     else if (value[0] == '/')
     {

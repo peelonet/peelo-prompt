@@ -12,15 +12,19 @@ C++17 fork of the [linenoise] readline replacement library.
 * History handling.
 * Completion.
 * Hints (suggestions at the right of the prompt as you type).
-* About 1,200 lines of BSD license source code.
+* About 1,300 lines of BSD license source code.
 * Only uses a subset of VT100 escapes (ANSI.SYS compatible).
+* [Header-only].
+
+[Header-only]: https://en.wikipedia.org/wiki/Header-only
 
 # The API
 
 Just like the original library, `peelo-prompt` attempts to be very easy to
 use, and reading the example shipped with the library should get you up to
-speed ASAP. Here is a list of functions provided by the library and how to use
-them.
+speed ASAP. The library consists from `prompt` class contained in namespace
+`peelo`, which you create an instance of. Here is a list of methods included
+in the class and description on how to use them.
 
 ```cpp
 std::optional<std::string> peelo::prompt::input(const std::string& prompt);
@@ -33,7 +37,7 @@ of the cursor. The function returns the line composed by user as an instance of
 file is reached.
 
 When a tty is detected (the user is actually typing into a terminal session)
-the maximum editable line length is `LINENOISE_MAX_LINE`. When instead the
+the maximum editable line length is `PEELO_PROMPT_MAX_LINE`. When instead the
 standard input is not a tty, which happens every time you redirect a file
 to a program, or use it in an Unix pipeline, there are no limits to the
 length of the line that can be returned.
@@ -42,7 +46,9 @@ The canonical loop used by a program using `peelo-prompt` will be something
 like this:
 
 ```cpp
-while (auto line = peelo::prompt::input("hello> "))
+peelo::prompt prompt;
+
+while (auto line = prompt.input("hello> "))
 {
     std::cout << "You wrote: " << line.value() << std::endl;
 }
@@ -56,7 +62,7 @@ towards left to make room. This works if your program is one where the user is
 unlikely to write a lot of text, otherwise multi line editing, where multiple
 screens rows are used, can be a lot more comfortable.
 
-In order to enable multi line editing use the following API call:
+In order to enable multi line editing use the following method call:
 
 ```cpp
 peelo::prompt::set_multi_line(true);
@@ -73,16 +79,17 @@ search and re-edit already inserted lines of text.
 The followings are the history API calls:
 
 ```cpp
-bool peelo::prompt::history::add(const std::string& line);
-void peelo::prompt::history::set_max_size(std::size_t size);
+bool peelo::prompt::add_to_history(const std::string& line);
+void peelo::prompt::set_history_max_size(std::size_t size);
 ```
 
-Use `add` every time you want to add a new element to the top of the history
-(it will be the first the user will see when using the up array).
+Use `add_to_history` every time you want to add a new element to the top of the
+history (it will be the first the user will see when using the up array).
 
 Note that for history to work, you have to set a maximum size for the history
-(which is 100 by default). This is accomplished using the `set_max_size`
-function. Setting history size to `0` will disable history completely.
+(which is 100 by default). This is accomplished using the
+`set_history_max_size` method. Setting history size to `0` will disable history
+completely.
 
 ## Completion
 
@@ -97,7 +104,7 @@ into which will act as the completions for the current string.
 The following is an example of registering a completion callback:
 
 ```cpp
-peelo::prompt::completion::set_callback(completion);
+peelo::prompt::set_completion_callback(completion);
 ```
 
 The completion must be a function returning `void` and getting as input
@@ -142,7 +149,7 @@ The feature works similarly to the history feature, using a callback. To
 register the callback we use:
 
 ```cpp
-peelo::prompt::hints::set_callback(hints);
+peelo::prompt::set_hints_callback(hints);
 ```
 
 The callback itself is implemented like this:

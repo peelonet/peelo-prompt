@@ -23,8 +23,3 @@ TARGET_INCLUDE_DIRECTORIES(
   PRIVATE
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../include>
 )
-
-TARGET_LINK_LIBRARIES(
-  example
-  peelocpp_prompt
-)
