@@ -197,7 +197,8 @@ namespace peelo
      */
     void clear_screen()
     {
-      ::write(STDOUT_FILENO, "\033[H\033[2J", 7);
+      if (::write(STDOUT_FILENO, "\033[H\033[2J", 7) < 0)
+        ;
     }
 
     /**
@@ -657,7 +658,8 @@ namespace peelo
       std::snprintf(seq, 64, "\r\x1b[%dC", static_cast<int>(pos + plen));
       buffer.append(seq, std::strlen(seq));
 
-      ::write(fd, buffer.c_str(), buffer.length());
+      if (::write(fd, buffer.c_str(), buffer.length()) < 0)
+        ;
     }
 
     /**
@@ -747,7 +749,8 @@ namespace peelo
 
       state.oldpos = state.pos;
 
-      ::write(fd, buffer.c_str(), buffer.length());
+      if (::write(fd, buffer.c_str(), buffer.length()) < 0)
+        ;
     }
 
     /**
@@ -827,7 +830,8 @@ namespace peelo
           char sequence[32];
 
           std::snprintf(sequence, 32, "\033[%dD", cols - start);
-          ::write(ofd, sequence, std::strlen(sequence));
+          if (::write(ofd, sequence, std::strlen(sequence)) < 0)
+            ;
         }
 
         return cols;
