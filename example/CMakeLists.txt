@@ -6,12 +6,6 @@ ADD_EXECUTABLE(
   example.cpp
 )
 
-TARGET_COMPILE_OPTIONS(
-  example
-  PRIVATE
-    -Wall -Werror
-)
-
 TARGET_COMPILE_FEATURES(
   example
   PRIVATE
