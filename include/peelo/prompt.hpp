@@ -28,8 +28,7 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-#ifndef PEELO_PROMPT_HPP_GUARD
-#define PEELO_PROMPT_HPP_GUARD
+#pragma once
 
 #include <cerrno>
 #include <cstddef>
@@ -40,9 +39,18 @@
 #include <string>
 #include <vector>
 
-#include <sys/ioctl.h>
-#include <termios.h>
-#include <unistd.h>
+#if defined(_WIN32)
+# include <conio.h>
+# include <windows.h>
+# include <io.h>
+# define isatty _isatty
+# define write _write
+# define STDIN_FILENO 0
+#else
+# include <sys/ioctl.h>
+# include <termios.h>
+# include <unistd.h>
+#endif
 
 #if !defined(PEELO_PROMPT_MAX_LINE)
 # define PEELO_PROMPT_MAX_LINE 4096
@@ -1329,4 +1337,8 @@ namespace peelo
   };
 }
 
-#endif /* !PEELO_PROMPT_HPP_GUARD */
+#if defined(_WIN32)
+# undef isatty
+# undef write
+# undef STDIN_FILENO
+#endif
