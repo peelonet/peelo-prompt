@@ -1,6 +1,6 @@
 # peelo-prompt
 
-[![travis][travis-image]][travis-url]
+![Build](https://github.com/peelonet/peelo-prompt/workflows/Build/badge.svg)
 
 C++17 fork of the [linenoise] readline replacement library.
 
@@ -202,6 +202,3 @@ user typed. You can do this by calling the following function:
 ```cpp
 peelo::prompt::clear_screen();
 ```
-
-[travis-image]: https://travis-ci.com/peelonet/peelo-prompt.svg?branch=master
-[travis-url]: https://travis-ci.com/peelonet/peelo-prompt
